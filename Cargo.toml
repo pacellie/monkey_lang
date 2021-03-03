@@ -1,0 +1,9 @@
+[package]
+name = "monkey_lang"
+version = "0.1.0"
+authors = ["Martin Rau <martin.rau@tum.de>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
