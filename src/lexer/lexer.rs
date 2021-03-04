@@ -70,16 +70,19 @@ impl<'a> Lexer<'a> {
 }
 
 fn lookup_ident(ident: &str) -> Token {
-    match ident {
-        "fn" => Token::Function,
-        "let" => Token::Let,
-        "true" => Token::True,
-        "false" => Token::False,
-        "if" => Token::If,
-        "else" => Token::Else,
+    #[rustfmt::skip]
+    let token =match ident {
+        "fn"     => Token::Function,
+        "let"    => Token::Let,
+        "true"   => Token::True,
+        "false"  => Token::False,
+        "if"     => Token::If,
+        "else"   => Token::Else,
         "return" => Token::Return,
-        _ => Token::Ident(ident.to_string()),
-    }
+        _        => Token::Ident(ident.to_string()),
+    };
+
+    token
 }
 
 fn is_letter(ch: u8) -> bool {
@@ -111,9 +114,7 @@ impl<'a> Iterator for Lexer<'a> {
             b')' => Token::RParen,
             b'{' => Token::LBrace,
             b'}' => Token::RBrace,
-            0 => {
-                return None;
-            }
+            0 => Token::Eof,
             _ => {
                 if is_letter(self.ch) {
                     return Some(lookup_ident(self.read_while(is_letter)));
@@ -151,7 +152,10 @@ mod tests {
         ];
 
         let lexer = Lexer::new(input);
-        let tokens: Vec<Token> = lexer.into_iter().collect();
+        let tokens: Vec<Token> = lexer
+            .into_iter()
+            .take_while(|token| token != &Token::Eof)
+            .collect();
 
         assert_eq!(tokens, expected)
     }
@@ -208,7 +212,10 @@ mod tests {
         ];
 
         let lexer = Lexer::new(input);
-        let tokens: Vec<Token> = lexer.into_iter().collect();
+        let tokens: Vec<Token> = lexer
+            .into_iter()
+            .take_while(|token| token != &Token::Eof)
+            .collect();
 
         assert_eq!(tokens, expected)
     }
@@ -269,7 +276,10 @@ mod tests {
         ];
 
         let lexer = Lexer::new(input);
-        let tokens: Vec<Token> = lexer.into_iter().collect();
+        let tokens: Vec<Token> = lexer
+            .into_iter()
+            .take_while(|token| token != &Token::Eof)
+            .collect();
 
         assert_eq!(tokens, expected)
     }

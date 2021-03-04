@@ -18,9 +18,7 @@ pub fn repl() -> io::Result<()> {
             QUIT => return Ok(()),
             line => {
                 let lexer = Lexer::new(line.as_bytes());
-                for token in lexer.into_iter() {
-                    println!("{}", token);
-                }
+                lexer.into_iter().for_each(|token| println!("{}", token));
             }
         }
 
