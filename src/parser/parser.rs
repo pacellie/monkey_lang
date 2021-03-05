@@ -1,7 +1,7 @@
 use crate::lexer::{Lexer, Token};
 use crate::parser::ast::*;
 
-use std::fmt;
+use std::{fmt, num};
 
 type Result<T> = std::result::Result<T, ParseError>;
 
@@ -12,6 +12,23 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+impl From<num::ParseIntError> for ParseError {
+    fn from(error: num::ParseIntError) -> Self {
+        ParseError(error.to_string())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Precedence {
+    Lowest,
+    Equals,      // ==
+    LessGreater, // >, <
+    Sum,         // +
+    Product,     // *
+    Prefix,      //-, !
+    Call,        // f()
 }
 
 #[derive(Debug)]
@@ -80,14 +97,13 @@ impl<'a> Parser<'a> {
 
     fn parse_stmt(&mut self) -> Result<Statement> {
         match self.current {
-            Token::Let => self
-                .parse_let_stmt()
-                .map(|let_stmt| Statement::LetKind(let_stmt)),
-            _ => Err(ParseError("Oops".to_string())),
+            Token::Let => self.parse_let_stmt(),
+            Token::Return => self.parse_return_stmt(),
+            _ => self.parse_expr_stmt(),
         }
     }
 
-    fn parse_let_stmt(&mut self) -> Result<Let> {
+    fn parse_let_stmt(&mut self) -> Result<Statement> {
         let name = self.peek_identifer()?;
         self.peek_acknowledge(Token::Assign)?;
 
@@ -95,7 +111,48 @@ impl<'a> Parser<'a> {
             self.advance();
         }
 
-        Ok(Let::new(name, Expression::Dummy))
+        Ok(Statement::let_stmt(name, Expression::Dummy))
+    }
+
+    fn parse_return_stmt(&mut self) -> Result<Statement> {
+        self.advance();
+
+        while self.current != Token::Semicolon {
+            self.advance();
+        }
+
+        Ok(Statement::return_stmt(Expression::Dummy))
+    }
+
+    fn parse_expr_stmt(&mut self) -> Result<Statement> {
+        let expr = self.parse_expr(Precedence::Lowest)?;
+        self.peek_acknowledge(Token::Semicolon)?;
+
+        Ok(Statement::stmt(expr))
+    }
+
+    fn parse_expr(&mut self, precedence: Precedence) -> Result<Expression> {
+        let left = match &self.current {
+            Token::Ident(name) => Expression::name(name),
+            Token::Int(n) => n.parse::<i32>().map(|n| Expression::integer(n))?,
+            Token::Bang => self.parse_prefix_expr()?,
+            Token::Minus => self.parse_prefix_expr()?,
+            _ => {
+                return Err(ParseError("Oops.".to_string()));
+            }
+        };
+
+        Ok(left)
+    }
+
+    fn parse_prefix_expr(&mut self) -> Result<Expression> {
+        let operator = self.current.clone();
+
+        self.advance();
+
+        let right = self.parse_expr(Precedence::Prefix)?;
+
+        Ok(Expression::prefix(operator, right))
     }
 }
 
@@ -103,22 +160,66 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_let_stmt() {
-        let input = b"let x = 5;\n\
-            let y = 10;\n\
-            let foobar = 838383;\n\
-            ";
+    use test_case::test_case;
 
+    #[test_case(
+        b"let x = 5;\n\
+          let y = 10;\n\
+          let foobar = 838383;\n\
+        ",
+        vec![
+            Statement::let_stmt("x", Expression::Dummy),
+            Statement::let_stmt("y", Expression::Dummy),
+            Statement::let_stmt("foobar", Expression::Dummy),
+        ] ;
+        "let stmt"
+    )]
+    #[test_case(
+        b"return 5;\n\
+          return 10;\n\
+          return 993322;\n\
+        ",
+        vec![
+            Statement::return_stmt(Expression::Dummy),
+            Statement::return_stmt(Expression::Dummy),
+            Statement::return_stmt(Expression::Dummy),
+        ] ;
+        "return stmt"
+    )]
+    #[test_case(
+        b"foobar;",
+        vec![
+            Statement::stmt(Expression::name("foobar")),
+        ] ;
+        "identifer stmt"
+    )]
+    #[test_case(
+        b"5;",
+        vec![
+            Statement::stmt(Expression::integer(5)),
+        ] ;
+        "integer stmt"
+    )]
+    #[test_case(
+        b"!5;",
+        vec![
+            Statement::stmt(Expression::prefix(Token::Bang , Expression::integer(5)))
+        ] ;
+        "prefix bang"
+    )]
+    #[test_case(
+        b"-15;",
+        vec![
+            Statement::stmt(Expression::prefix(Token::Minus, Expression::integer(15)))
+        ] ;
+        "prefix minus"
+    )]
+    fn test(input: &[u8], expected: Vec<Statement>) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
         let output = parser.parse();
 
-        let expected = Program::new(vec![
-            Statement::let_stmt("x", Expression::Dummy),
-            Statement::let_stmt("y", Expression::Dummy),
-            Statement::let_stmt("foobar", Expression::Dummy),
-        ]);
+        let expected = Program::new(expected);
 
         assert_eq!(output.unwrap(), expected)
     }

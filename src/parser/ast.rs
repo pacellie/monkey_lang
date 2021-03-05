@@ -1,22 +1,20 @@
-#[derive(Debug, PartialEq, Eq)]
-pub struct Let {
-    name: Name,
-    value: Expression,
-}
+use crate::lexer::Token;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
-    LetKind(Let),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Name {
-    name: String,
+    Let { name: Expression, value: Expression },
+    Return(Expression),
+    Stmt(Expression),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expression {
-    NameKind(Name),
+    Name(String),
+    Integer(i32),
+    Prefix {
+        operator: Token,
+        expr: Box<Expression>,
+    },
     Dummy,
 }
 
@@ -25,24 +23,37 @@ pub struct Program {
     stmts: Vec<Statement>,
 }
 
-impl Let {
-    pub fn new<S: Into<String>>(name: S, value: Expression) -> Let {
-        Let {
-            name: Name::new(name),
+impl Statement {
+    pub fn let_stmt<S: Into<String>>(name: S, value: Expression) -> Statement {
+        Statement::Let {
+            name: Expression::Name(name.into()),
             value,
         }
     }
-}
 
-impl Statement {
-    pub fn let_stmt<S: Into<String>>(name: S, value: Expression) -> Statement {
-        Statement::LetKind(Let::new(name, value))
+    pub fn return_stmt(value: Expression) -> Statement {
+        Statement::Return(value)
+    }
+
+    pub fn stmt(value: Expression) -> Statement {
+        Statement::Stmt(value)
     }
 }
 
-impl Name {
-    pub fn new<S: Into<String>>(name: S) -> Name {
-        Name { name: name.into() }
+impl Expression {
+    pub fn name<S: Into<String>>(name: S) -> Expression {
+        Expression::Name(name.into())
+    }
+
+    pub fn integer(n: i32) -> Expression {
+        Expression::Integer(n)
+    }
+
+    pub fn prefix(operator: Token, expr: Expression) -> Expression {
+        Expression::Prefix {
+            operator,
+            expr: Box::new(expr),
+        }
     }
 }
 
