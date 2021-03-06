@@ -31,6 +31,18 @@ enum Precedence {
     Call,        // f()
 }
 
+impl Precedence {
+    pub fn precedence(token: &Token) -> Precedence {
+        match token {
+            Token::Eq | Token::Neq => Precedence::Equals,
+            Token::Lt | Token::Gt => Precedence::LessGreater,
+            Token::Plus | Token::Minus => Precedence::Sum,
+            Token::Slash | Token::Asterisk => Precedence::Product,
+            _ => Precedence::Lowest,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -64,7 +76,7 @@ impl<'a> Parser<'a> {
                 Ok(name)
             }
             _ => Err(ParseError(format!(
-                "Expected identifier, got {} instead.",
+                "Expected `identifier`, got `{}` instead.",
                 self.peek
             ))),
         }
@@ -76,7 +88,7 @@ impl<'a> Parser<'a> {
             Ok(())
         } else {
             Err(ParseError(format!(
-                "Expected {}, got {} instead.",
+                "Expected `{}`, got `{}` instead.",
                 expected, self.peek
             )))
         }
@@ -92,7 +104,7 @@ impl<'a> Parser<'a> {
             self.advance();
         }
 
-        Ok(Program::new(stmts))
+        Ok(Block::new(stmts))
     }
 
     fn parse_stmt(&mut self) -> Result<Statement> {
@@ -103,6 +115,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // let <expr> = <expr>;
     fn parse_let_stmt(&mut self) -> Result<Statement> {
         let name = self.peek_identifer()?;
         self.peek_acknowledge(Token::Assign)?;
@@ -114,6 +127,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::let_stmt(name, Expression::Dummy))
     }
 
+    // return <epxr>;
     fn parse_return_stmt(&mut self) -> Result<Statement> {
         self.advance();
 
@@ -124,27 +138,56 @@ impl<'a> Parser<'a> {
         Ok(Statement::return_stmt(Expression::Dummy))
     }
 
+    // <expr>; | <expr>
     fn parse_expr_stmt(&mut self) -> Result<Statement> {
         let expr = self.parse_expr(Precedence::Lowest)?;
-        self.peek_acknowledge(Token::Semicolon)?;
 
-        Ok(Statement::stmt(expr))
+        if self.peek == Token::Semicolon {
+            self.advance();
+            Ok(Statement::stmt(expr))
+        } else {
+            Ok(Statement::expr(expr))
+        }
     }
 
     fn parse_expr(&mut self, precedence: Precedence) -> Result<Expression> {
-        let left = match &self.current {
+        #[rustfmt::skip]
+        let mut expr = match &self.current {
             Token::Ident(name) => Expression::name(name),
-            Token::Int(n) => n.parse::<i32>().map(|n| Expression::integer(n))?,
-            Token::Bang => self.parse_prefix_expr()?,
-            Token::Minus => self.parse_prefix_expr()?,
+            Token::Int(n)      => n.parse::<i32>().map(|n| Expression::integer(n))?,
+            Token::True                => Expression::boolean(true),
+            Token::False               => Expression::boolean(false),
+            Token::LParen              => self.parse_group_expr()?,
+            Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             _ => {
-                return Err(ParseError("Oops.".to_string()));
+                return Err(ParseError(format!(
+                    "`{}` is not a valid start of an expression.",
+                    self.current
+                )));
             }
         };
 
-        Ok(left)
+        while self.peek != Token::Semicolon && precedence < Precedence::precedence(&self.peek) {
+            expr = match &self.peek {
+                Token::Plus
+                | Token::Minus
+                | Token::Slash
+                | Token::Asterisk
+                | Token::Eq
+                | Token::Neq
+                | Token::Lt
+                | Token::Gt => {
+                    self.advance();
+                    self.parse_infix_expr(expr)?
+                }
+                _ => expr,
+            }
+        }
+
+        Ok(expr)
     }
 
+    // <un_op><expr>
     fn parse_prefix_expr(&mut self) -> Result<Expression> {
         let operator = self.current.clone();
 
@@ -154,6 +197,29 @@ impl<'a> Parser<'a> {
 
         Ok(Expression::prefix(operator, right))
     }
+
+    // <expr><bin_op><expr>
+    fn parse_infix_expr(&mut self, left: Expression) -> Result<Expression> {
+        let operator = self.current.clone();
+        let precedence = Precedence::precedence(&operator);
+
+        self.advance();
+
+        let right = self.parse_expr(precedence)?;
+
+        Ok(Expression::infix(left, operator, right))
+    }
+
+    // (<expr>)
+    fn parse_group_expr(&mut self) -> Result<Expression> {
+        self.advance();
+
+        let expr = self.parse_expr(Precedence::Lowest)?;
+
+        self.peek_acknowledge(Token::RParen)?;
+
+        Ok(expr)
+    }
 }
 
 #[cfg(test)]
@@ -162,65 +228,52 @@ mod tests {
 
     use test_case::test_case;
 
-    #[test_case(
-        b"let x = 5;\n\
-          let y = 10;\n\
-          let foobar = 838383;\n\
-        ",
-        vec![
-            Statement::let_stmt("x", Expression::Dummy),
-            Statement::let_stmt("y", Expression::Dummy),
-            Statement::let_stmt("foobar", Expression::Dummy),
-        ] ;
-        "let stmt"
-    )]
-    #[test_case(
-        b"return 5;\n\
-          return 10;\n\
-          return 993322;\n\
-        ",
-        vec![
-            Statement::return_stmt(Expression::Dummy),
-            Statement::return_stmt(Expression::Dummy),
-            Statement::return_stmt(Expression::Dummy),
-        ] ;
-        "return stmt"
-    )]
-    #[test_case(
-        b"foobar;",
-        vec![
-            Statement::stmt(Expression::name("foobar")),
-        ] ;
-        "identifer stmt"
-    )]
-    #[test_case(
-        b"5;",
-        vec![
-            Statement::stmt(Expression::integer(5)),
-        ] ;
-        "integer stmt"
-    )]
-    #[test_case(
-        b"!5;",
-        vec![
-            Statement::stmt(Expression::prefix(Token::Bang , Expression::integer(5)))
-        ] ;
-        "prefix bang"
-    )]
-    #[test_case(
-        b"-15;",
-        vec![
-            Statement::stmt(Expression::prefix(Token::Minus, Expression::integer(15)))
-        ] ;
-        "prefix minus"
-    )]
-    fn test(input: &[u8], expected: Vec<Statement>) {
+    #[test_case(b"let x = 5;", "let x = DUMMY;" ; "let stmt"      )]
+    #[test_case(b"return 5;" , "return DUMMY;"  ; "return stmt"   )]
+    #[test_case(b"foobar;"   , "foobar;"        ; "identifer stmt")]
+    #[test_case(b"5;"        , "5;"             ; "integer stmt"  )]
+    #[test_case(b"true;"     , "true;"          ; "true stmt"     )]
+    #[test_case(b"false;"    , "false;"         ; "false stmt"    )]
+    #[test_case(b"!5"    , "(!5)"     ; "prefix bang 01" )]
+    #[test_case(b"!true" , "(!true)"  ; "prefix bang 02" )]
+    #[test_case(b"!false", "(!false)" ; "prefix bang 03" )]
+    #[test_case(b"-15"   , "(-15)"    ; "prefix minus"   )]
+    #[test_case(b"5 + 5" , "(5 + 5)"  ; "infix plus"    )]
+    #[test_case(b"5 - 5" , "(5 - 5)"  ; "infix minus"   )]
+    #[test_case(b"5 * 5" , "(5 * 5)"  ; "infix asterisk")]
+    #[test_case(b"5 / 5" , "(5 / 5)"  ; "infix slash"   )]
+    #[test_case(b"5 > 5" , "(5 > 5)"  ; "infix gt"      )]
+    #[test_case(b"5 < 5" , "(5 < 5)"  ; "infix lt"      )]
+    #[test_case(b"5 == 5", "(5 == 5)" ; "infix eq"      )]
+    #[test_case(b"5 != 5", "(5 != 5)" ; "infix neq"     )]
+    #[test_case(b"-a * b"                     , "((-a) * b)"                             ; "precedence 01")]
+    #[test_case(b"!-a"                        , "(!(-a))"                                ; "precedence 02")]
+    #[test_case(b"a + b + c"                  , "((a + b) + c)"                          ; "precedence 03")]
+    #[test_case(b"a + b - c"                  , "((a + b) - c)"                          ; "precedence 04")]
+    #[test_case(b"a * b * c"                  , "((a * b) * c)"                          ; "precedence 05")]
+    #[test_case(b"a * b / c"                  , "((a * b) / c)"                          ; "precedence 06")]
+    #[test_case(b"a + b / c"                  , "(a + (b / c))"                          ; "precedence 07")]
+    #[test_case(b"a + b * c + d / e - f"      , "(((a + (b * c)) + (d / e)) - f)"        ; "precedence 08")]
+    #[test_case(b"3 + 4; -5 * 5"              , "(3 + 4);\n((-5) * 5)"                   ; "precedence 09")]
+    #[test_case(b"5 > 4 == 3 < 4"             , "((5 > 4) == (3 < 4))"                   ; "precedence 10")]
+    #[test_case(b"5 < 4 != 3 > 4"             , "((5 < 4) != (3 > 4))"                   ; "precedence 11")]
+    #[test_case(b"3 + 4 * 5 == 3 * 1 + 4 * 5" , "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))" ; "precedence 12")]
+    #[test_case(b"3 > 5 == false"             , "((3 > 5) == false)"                     ; "precedence 13")]
+    #[test_case(b"3 < 5 == true"              , "((3 < 5) == true)"                      ; "precedence 14")]
+    #[test_case(b"true == true"               , "(true == true)"                         ; "precedence 15")]
+    #[test_case(b"true != false"              , "(true != false)"                        ; "precedence 16")]
+    #[test_case(b"false == false"             , "(false == false)"                       ; "precedence 17")]
+    #[test_case(b"1 + (2 + 3) + 4"            , "((1 + (2 + 3)) + 4)"                    ; "precedence 18")]
+    #[test_case(b"(5 + 5) * 2"                , "((5 + 5) * 2)"                          ; "precedence 19")]
+    #[test_case(b"2 / (5 + 5)"                , "(2 / (5 + 5))"                          ; "precedence 20")]
+    #[test_case(b"-(5 + 5)"                   , "(-(5 + 5))"                             ; "precedence 21")]
+    #[test_case(b"!(true == true)"            , "(!(true == true))"                      ; "precedence 22")]
+    fn test(input: &[u8], expected: &str) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
         let output = parser.parse();
+        let output: String = output.unwrap().to_string();
 
-        let expected = Program::new(expected);
-
-        assert_eq!(output.unwrap(), expected)
+        assert_eq!(output, expected)
     }
 }
