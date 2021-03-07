@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 test-case = "1.1.0"
+lazy_static = "1.4.0"
 
 [dev-dependecies]
 
