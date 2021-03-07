@@ -1,5 +1,7 @@
 use crate::lexer::Token;
 
+use std::fmt;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
     Let { name: String, value: Expression },
@@ -8,8 +10,33 @@ pub enum Statement {
     Expr(Expression),
 }
 
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Statement::Let { name, value } => write!(f, "let {} = {};", name, value),
+            Statement::Return(expr) => write!(f, "return {};", expr),
+            Statement::Stmt(expr) => write!(f, "{};", expr),
+            Statement::Expr(expr) => write!(f, "{}", expr),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Block(Vec<Statement>);
+
+impl fmt::Display for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut result = String::new();
+
+        for stmt in &self.0[0..self.0.len() - 1] {
+            result.push_str(&stmt.to_string());
+            result.push_str(" ");
+        }
+        result.push_str(&self.0[self.0.len() - 1].to_string());
+
+        write!(f, "{}", result)
+    }
+}
 
 pub type Program = Block;
 
@@ -33,6 +60,29 @@ pub enum Expression {
         no: Option<Block>,
     },
     Dummy,
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::Name(string) => write!(f, "{}", string),
+            Expression::Integer(int) => write!(f, "{}", int),
+            Expression::Boolean(boolean) => write!(f, "{}", boolean),
+            Expression::Prefix { operator, expr } => write!(f, "({}{})", operator, expr),
+            Expression::Infix {
+                left,
+                operator,
+                right,
+            } => write!(f, "({} {} {})", left, operator, right),
+            Expression::If { cond, yes, no } => {
+                let no = no
+                    .as_ref()
+                    .map_or("".to_string(), |block| format!(" else {{ {} }}", block));
+                write!(f, "if ({}) {{ {} }}{}", cond, yes, no)
+            }
+            Expression::Dummy => write!(f, "DUMMY"),
+        }
+    }
 }
 
 // Statement
