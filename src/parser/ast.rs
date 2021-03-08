@@ -1,6 +1,6 @@
 use crate::lexer::Token;
 
-use std::fmt;
+use std::fmt::{self, Display};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Statement {
@@ -24,17 +24,25 @@ impl fmt::Display for Statement {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Block(Vec<Statement>);
 
+fn fmt_slice<A, B>(slice: &[A], sep: B) -> String
+where
+    A: Display,
+    B: Display,
+{
+    let mut result = String::new();
+
+    for stmt in &slice[0..slice.len() - 1] {
+        result.push_str(&stmt.to_string());
+        result.push_str(&sep.to_string());
+    }
+    result.push_str(&slice[slice.len() - 1].to_string());
+
+    result
+}
+
 impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut result = String::new();
-
-        for stmt in &self.0[0..self.0.len() - 1] {
-            result.push_str(&stmt.to_string());
-            result.push_str(" ");
-        }
-        result.push_str(&self.0[self.0.len() - 1].to_string());
-
-        write!(f, "{}", result)
+        write!(f, "{}", fmt_slice(&self.0[..], " "))
     }
 }
 
@@ -59,6 +67,14 @@ pub enum Expression {
         yes: Block,
         no: Option<Block>,
     },
+    Function {
+        params: Vec<String>,
+        body: Block,
+    },
+    Call {
+        function: Box<Expression>,
+        args: Vec<Expression>,
+    },
     Dummy,
 }
 
@@ -79,6 +95,12 @@ impl fmt::Display for Expression {
                     .as_ref()
                     .map_or("".to_string(), |block| format!(" else {{ {} }}", block));
                 write!(f, "if ({}) {{ {} }}{}", cond, yes, no)
+            }
+            Expression::Function { params, body } => {
+                write!(f, "fn ({}) {{ {} }}", fmt_slice(params, ", "), body)
+            }
+            Expression::Call { function, args } => {
+                write!(f, "{}({})", function, fmt_slice(args, ", "))
             }
             Expression::Dummy => write!(f, "DUMMY"),
         }
@@ -143,5 +165,19 @@ pub fn if_expr(cond: Expression, yes: Block, no: Option<Block>) -> Expression {
         cond: Box::new(cond),
         yes,
         no,
+    }
+}
+
+pub fn function<S: Into<String> + Clone>(params: Vec<S>, body: Block) -> Expression {
+    Expression::Function {
+        params: params.iter().map(|param| param.clone().into()).collect(),
+        body,
+    }
+}
+
+pub fn call(function: Expression, args: Vec<Expression>) -> Expression {
+    Expression::Call {
+        function: Box::new(function),
+        args,
     }
 }

@@ -1,4 +1,5 @@
 use crate::lexer::Lexer;
+use crate::parser::Parser;
 
 use std::io::{self, Write};
 
@@ -18,7 +19,11 @@ pub fn repl() -> io::Result<()> {
             QUIT => return Ok(()),
             line => {
                 let lexer = Lexer::new(line.as_bytes());
-                lexer.into_iter().for_each(|token| println!("{}", token));
+                let mut parser = Parser::new(lexer);
+                match parser.parse() {
+                    Ok(program) => println!("{}", program),
+                    Err(err) => println!("{}", err),
+                }
             }
         }
 

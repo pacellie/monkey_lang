@@ -38,6 +38,7 @@ impl Precedence {
             Token::Lt | Token::Gt => Precedence::LessGreater,
             Token::Plus | Token::Minus => Precedence::Sum,
             Token::Slash | Token::Asterisk => Precedence::Product,
+            Token::LParen => Precedence::Call,
             _ => Precedence::Lowest,
         }
     }
@@ -119,23 +120,24 @@ impl<'a> Parser<'a> {
     fn parse_let_stmt(&mut self) -> Result<Statement> {
         let name = self.peek_identifer()?;
         self.peek_acknowledge(Token::Assign)?;
+        self.advance();
 
-        while self.current != Token::Semicolon {
-            self.advance();
-        }
+        let expr = self.parse_expr(Precedence::Lowest)?;
 
-        Ok(let_stmt(name, Expression::Dummy))
+        self.peek_acknowledge(Token::Semicolon)?;
+
+        Ok(let_stmt(name, expr))
     }
 
     // return <epxr>;
     fn parse_return_stmt(&mut self) -> Result<Statement> {
         self.advance();
 
-        while self.current != Token::Semicolon {
-            self.advance();
-        }
+        let expr = self.parse_expr(Precedence::Lowest)?;
 
-        Ok(return_stmt(Expression::Dummy))
+        self.peek_acknowledge(Token::Semicolon)?;
+
+        Ok(return_stmt(expr))
     }
 
     // <stmt>*
@@ -172,6 +174,7 @@ impl<'a> Parser<'a> {
             Token::Int(n)      => n.parse::<i32>().map(|n| integer(n))?,
             Token::True                => boolean(true),
             Token::False               => boolean(false),
+            Token::Function            => self.parse_function_expr()?,
             Token::LParen              => self.parse_group_expr()?,
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             Token::If                  => self.parse_if_expr()?,
@@ -195,6 +198,10 @@ impl<'a> Parser<'a> {
                 | Token::Gt => {
                     self.advance();
                     self.parse_infix_expr(expr)?
+                }
+                Token::LParen => {
+                    self.advance();
+                    self.parse_call_expr(expr)?
                 }
                 _ => expr,
             }
@@ -260,6 +267,62 @@ impl<'a> Parser<'a> {
             Ok(if_expr(cond, yes, None))
         }
     }
+
+    // fn(<params>)<block>
+    fn parse_function_expr(&mut self) -> Result<Expression> {
+        self.peek_acknowledge(Token::LParen)?;
+
+        let params = self.parse_params()?;
+
+        self.peek_acknowledge(Token::LBrace)?;
+
+        let body = self.parse_block_stmt()?;
+
+        Ok(function(params, body))
+    }
+
+    // (<param>(,<param>)*)*
+    fn parse_params(&mut self) -> Result<Vec<String>> {
+        let mut params = vec![];
+
+        while self.peek != Token::RParen && self.peek != Token::Eof {
+            let param = self.peek_identifer()?;
+            params.push(param);
+
+            if self.peek != Token::RParen {
+                self.peek_acknowledge(Token::Comma)?;
+            }
+        }
+        self.advance();
+
+        Ok(params)
+    }
+
+    // <expr>(<args>)
+    fn parse_call_expr(&mut self, function: Expression) -> Result<Expression> {
+        let args = self.parse_args()?;
+
+        Ok(call(function, args))
+    }
+
+    // (<expr>(,<expr>)*)*
+    fn parse_args(&mut self) -> Result<Vec<Expression>> {
+        let mut args = vec![];
+
+        while self.peek != Token::RParen && self.peek != Token::Eof {
+            self.advance();
+
+            let arg = self.parse_expr(Precedence::Lowest)?;
+            args.push(arg);
+
+            if self.peek != Token::RParen {
+                self.peek_acknowledge(Token::Comma)?;
+            }
+        }
+        self.advance();
+
+        Ok(args)
+    }
 }
 
 #[cfg(test)]
@@ -275,13 +338,21 @@ mod tests {
         static ref LET_STMT: (&'static [u8], Program) =
         (
             b"let x = 5;",
-            block(vec![let_stmt("x", Expression::Dummy)])
+            block(vec![
+                let_stmt(
+                    "x",
+                    integer(5)
+                )
+
+            ])
         );
 
         static ref RETURN_STMT: (&'static [u8], Program) =
         (
             b"return 5;",
-            block(vec![return_stmt(Expression::Dummy)])
+            block(vec![
+                return_stmt(integer(5))
+            ])
         );
 
         // Literal
@@ -307,6 +378,67 @@ mod tests {
         (
             b"false",
             block(vec![expr_stmt(boolean(false))])
+        );
+
+        static ref LITERAL_05: (&'static [u8], Program) =
+        (
+            b"fn() {}",
+            block(vec![expr_stmt(
+                function::<String>(
+                    vec![],
+                    block(vec![])
+                )
+            )])
+        );
+
+        static ref LITERAL_06: (&'static [u8], Program) =
+        (
+            b"fn(x) {}",
+            block(vec![expr_stmt(
+                function(
+                    vec![
+                        "x",
+                    ],
+                    block(vec![])
+                )
+            )])
+        );
+
+        static ref LITERAL_07: (&'static [u8], Program) =
+        (
+            b"fn(x, y) { x + y; }",
+            block(vec![expr_stmt(
+                function(
+                    vec![
+                        "x",
+                        "y",
+                    ],
+                    block(vec![
+                        stmt(
+                            infix(
+                                name("x"),
+                                Token::Plus,
+                                name("y"),
+                            )
+                        )
+                    ])
+                )
+            )])
+        );
+
+        static ref LITERAL_08: (&'static [u8], Program) =
+        (
+            b"fn(x, y, z) {}",
+            block(vec![expr_stmt(
+                function(
+                    vec![
+                        "x",
+                        "y",
+                        "z",
+                    ],
+                    block(vec![])
+                )
+            )])
         );
 
         // Prefix Expression
@@ -746,6 +878,100 @@ mod tests {
             )])
         );
 
+        static ref PRECEDENCE_23: (&'static [u8], Program) =
+        (
+            b"a + add(b * c) + d",
+            block(vec![expr_stmt(
+                infix(
+                    infix(
+                        name("a"),
+                        Token::Plus,
+                        call(
+                            name("add"),
+                            vec![
+                                infix(
+                                    name("b"),
+                                    Token::Asterisk,
+                                    name("c"),
+                                )
+                            ]
+                        )
+                    ),
+                    Token::Plus,
+                    name("d")
+                )
+            )])
+        );
+
+        static ref PRECEDENCE_24: (&'static [u8], Program) =
+        (
+            b"add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))",
+            block(vec![expr_stmt(
+                call(
+                    name("add"),
+                    vec![
+                        name("a"),
+                        name("b"),
+                        integer(1),
+                        infix(
+                            integer(2),
+                            Token::Asterisk,
+                            integer(3),
+                        ),
+                        infix(
+                            integer(4),
+                            Token::Plus,
+                            integer(5),
+                        ),
+                        call(
+                            name("add"),
+                            vec![
+                                integer(6),
+                                infix(
+                                    integer(7),
+                                    Token::Asterisk,
+                                    integer(8),
+                                )
+                            ]
+                        )
+                    ]
+                )
+            )])
+        );
+
+        static ref PRECEDENCE_25: (&'static [u8], Program) =
+        (
+            b"add(a + b + c * d / f + g)",
+            block(vec![expr_stmt(
+                call(
+                    name("add"),
+                    vec![
+                        infix(
+                            infix(
+                                infix(
+                                    name("a"),
+                                    Token::Plus,
+                                    name("b"),
+                                ),
+                                Token::Plus,
+                                infix(
+                                    infix(
+                                        name("c"),
+                                        Token::Asterisk,
+                                        name("d"),
+                                    ),
+                                    Token::Slash,
+                                    name("f")
+                                ),
+                            ),
+                            Token::Plus,
+                            name("g")
+                        )
+                    ]
+                )
+            )])
+        );
+
         // If Expression
         static ref IF_EXPR_01: (&'static [u8], Program) =
         (
@@ -774,6 +1000,80 @@ mod tests {
                 )
             ])
         );
+
+        // Call Expression
+        static ref CALL_EXPR_01: (&'static [u8], Program) =
+        (
+            b"add()",
+            block(vec![
+                expr_stmt(
+                    call(
+                        name("add"),
+                        vec![],
+                    )
+                ),
+            ])
+        );
+
+        static ref CALL_EXPR_02: (&'static [u8], Program) =
+        (
+            b"add(1)",
+            block(vec![
+                expr_stmt(
+                    call(
+                        name("add"),
+                        vec![
+                            integer(1),
+                        ]
+                    )
+                ),
+            ])
+        );
+
+        static ref CALL_EXPR_03: (&'static [u8], Program) =
+        (
+            b"add(1, 2 * 3)",
+            block(vec![
+                expr_stmt(
+                    call(
+                        name("add"),
+                        vec![
+                            integer(1),
+                            infix(
+                                integer(2),
+                                Token::Asterisk,
+                                integer(3),
+                            ),
+                        ]
+                    )
+                ),
+            ])
+        );
+
+        static ref CALL_EXPR_04: (&'static [u8], Program) =
+        (
+            b"add(1, 2 * 3, 4 + 5)",
+            block(vec![
+                expr_stmt(
+                    call(
+                        name("add"),
+                        vec![
+                            integer(1),
+                            infix(
+                                integer(2),
+                                Token::Asterisk,
+                                integer(3),
+                            ),
+                            infix(
+                                integer(4),
+                                Token::Plus,
+                                integer(5),
+                            ),
+                        ]
+                    )
+                ),
+            ])
+        );
     }
 
     #[test_case(LET_STMT.0     , &LET_STMT.1      ; "let stmt"       )]
@@ -782,6 +1082,10 @@ mod tests {
     #[test_case(LITERAL_02.0   , &LITERAL_02.1    ; "literal integer")]
     #[test_case(LITERAL_03.0   , &LITERAL_03.1    ; "literal true"   )]
     #[test_case(LITERAL_04.0   , &LITERAL_04.1    ; "literal false"  )]
+    #[test_case(LITERAL_05.0   , &LITERAL_05.1    ; "literal fn 0"   )]
+    #[test_case(LITERAL_06.0   , &LITERAL_06.1    ; "literal fn 1"   )]
+    #[test_case(LITERAL_07.0   , &LITERAL_07.1    ; "literal fn 2"   )]
+    #[test_case(LITERAL_08.0   , &LITERAL_08.1    ; "literal fn 3"   )]
     #[test_case(PREFIX_01.0    , &PREFIX_01.1     ; "prefix bang"    )]
     #[test_case(PREFIX_02.0    , &PREFIX_02.1     ; "prefix minus"   )]
     #[test_case(INFIX_01.0     , &INFIX_01.1      ; "infix plus"     )]
@@ -814,8 +1118,15 @@ mod tests {
     #[test_case(PRECEDENCE_20.0, &PRECEDENCE_20.1 ; "precedence 20"  )]
     #[test_case(PRECEDENCE_21.0, &PRECEDENCE_21.1 ; "precedence 21"  )]
     #[test_case(PRECEDENCE_22.0, &PRECEDENCE_22.1 ; "precedence 22"  )]
+    #[test_case(PRECEDENCE_23.0, &PRECEDENCE_23.1 ; "precedence 23"  )]
+    #[test_case(PRECEDENCE_24.0, &PRECEDENCE_24.1 ; "precedence 24"  )]
+    #[test_case(PRECEDENCE_25.0, &PRECEDENCE_25.1 ; "precedence 25"  )]
     #[test_case(IF_EXPR_01.0   , &IF_EXPR_01.1    ; "if expr 01"     )]
     #[test_case(IF_EXPR_02.0   , &IF_EXPR_02.1    ; "if expr 02"     )]
+    #[test_case(CALL_EXPR_01.0 , &CALL_EXPR_01.1  ; "call expr 01"   )]
+    #[test_case(CALL_EXPR_02.0 , &CALL_EXPR_02.1  ; "call expr 02"   )]
+    #[test_case(CALL_EXPR_03.0 , &CALL_EXPR_03.1  ; "call expr 03"   )]
+    #[test_case(CALL_EXPR_04.0 , &CALL_EXPR_04.1  ; "call expr 04"   )]
     fn test(input: &[u8], expected: &Program) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
