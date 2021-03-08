@@ -1,3 +1,4 @@
+use crate::interpreter::eval;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -21,8 +22,14 @@ pub fn repl() -> io::Result<()> {
                 let lexer = Lexer::new(line.as_bytes());
                 let mut parser = Parser::new(lexer);
                 match parser.parse() {
-                    Ok(program) => println!("{}", program),
-                    Err(err) => println!("{}", err),
+                    Ok(program) => {
+                        println!("{}", program);
+                        match eval(&program) {
+                            Ok(obj) => println!("{}", obj),
+                            Err(err) => println!("Runtime Error: {}", err),
+                        }
+                    }
+                    Err(err) => println!("Parser Error: {}", err),
                 }
             }
         }

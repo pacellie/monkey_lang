@@ -22,7 +22,7 @@ impl fmt::Display for Statement {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Block(Vec<Statement>);
+pub struct Block(pub Vec<Statement>);
 
 fn fmt_slice<A, B>(slice: &[A], sep: B) -> String
 where
