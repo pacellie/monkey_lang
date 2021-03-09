@@ -74,7 +74,12 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
         }),
         Expression::Call { function, args } => {
             let function = eval_expr(env.clone(), *function)?;
-            let args = eval_exprs(env, args)?;
+            let args: Result<Vec<Object>> = args
+                .iter()
+                .cloned()
+                .map(|expr| eval_expr(env.clone(), expr))
+                .collect();
+            let args = args?;
 
             match function {
                 Object::Function { env, params, body } => {
@@ -95,16 +100,6 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
             }
         }
     }
-}
-
-fn eval_exprs(env: Env, exprs: Vec<Expression>) -> Result<Vec<Object>> {
-    let mut result = vec![];
-
-    for expr in exprs {
-        result.push(eval_expr(env.clone(), expr)?);
-    }
-
-    Ok(result)
 }
 
 fn eval_prefix_expr(env: Env, operator: Token, expr: Expression) -> Result<Object> {
