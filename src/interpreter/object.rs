@@ -27,13 +27,9 @@ impl fmt::Display for Object {
             Object::Boolean(b) => write!(f, "{}", b),
             Object::Unit => write!(f, "Unit"),
             Object::Return(obj) => write!(f, "Return {}", obj),
-            Object::Function { env, params, body } => write!(
-                f,
-                "{} :- fn({}) {{ {} }}",
-                format!("{:p}", &(*env)), // cyclic printing leads to stackoverflow!
-                params.iter().join(", "),
-                body
-            ),
+            Object::Function { params, body, .. } => {
+                write!(f, "fn({}) {{ {} }}", params.iter().join(", "), body)
+            }
         }
     }
 }

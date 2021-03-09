@@ -1,32 +1,49 @@
 use crate::interpreter::Object;
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use itertools::Itertools;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+thread_local! {
+    static ID: Cell<usize> = Cell::new(0);
+}
+
+fn next_id() -> usize {
+    ID.with(|cell| {
+        let i = cell.get();
+        cell.set(i + 1);
+        i
+    })
+}
+
+#[derive(Debug, Clone)]
 pub struct Environment {
     parent: Option<Rc<RefCell<Environment>>>,
     map: HashMap<String, Object>,
+    id: usize,
+}
+
+impl PartialEq for Environment {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Environment {}
+
+impl Hash for Environment {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state)
+    }
 }
 
 impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let parent = self
-            .parent
-            .as_ref()
-            .map_or("".to_string(), |parent| parent.borrow().to_string());
-
-        let map = self
-            .map
-            .iter()
-            .map(|(key, value)| format!("{} -> {}", key, value))
-            .join(", ");
-
-        write!(f, "{} <= {{ {} }}", parent, map)
+        write!(f, "{}", self.format(&mut HashSet::new()))
     }
 }
 
@@ -35,6 +52,7 @@ impl Environment {
         Environment {
             parent: None,
             map: HashMap::new(),
+            id: next_id(),
         }
     }
 
@@ -42,6 +60,7 @@ impl Environment {
         Environment {
             parent: Some(parent),
             map: HashMap::new(),
+            id: next_id(),
         }
     }
 
@@ -61,5 +80,38 @@ impl Environment {
 
     pub fn clear(&mut self) {
         self.map.clear();
+    }
+
+    fn format(&self, done: &mut HashSet<Environment>) -> String {
+        if done.contains(self) {
+            return "".to_string();
+        }
+
+        done.insert(self.clone());
+
+        let mut output = self
+            .parent
+            .as_ref()
+            .map_or("".to_string(), |parent| parent.borrow().format(done));
+
+        let pretty = self
+            .map
+            .iter()
+            .map(|(key, value)| {
+                if let Object::Function { env, .. } = value {
+                    output.push_str(&env.borrow().format(done));
+                    format!("{} :- {} -> {}", env.borrow().id, key, value)
+                } else {
+                    format!("{} -> {}", key, value)
+                }
+            })
+            .join(", ");
+
+        if output.len() != 0 {
+            output.push_str("\n");
+        }
+        output.push_str(&format!("{}: {}", self.id, pretty));
+
+        output
     }
 }
