@@ -1,14 +1,34 @@
-use crate::interpreter::eval;
+use crate::interpreter::{eval, Environment};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
+use std::cell::RefCell;
 use std::io::{self, Write};
+use std::rc::Rc;
 
 const PROMPT: &str = ">> ";
 const QUIT: &str = "quit";
+const CLEAR: &str = "clear";
+const ENV: &str = "env";
+
+fn run(env: Rc<RefCell<Environment>>, input: &str) {
+    let lexer = Lexer::new(input.as_bytes());
+    let mut parser = Parser::new(lexer);
+    match parser.parse() {
+        Ok(ast) => {
+            println!("{}", ast);
+            match eval(env, ast) {
+                Ok(obj) => println!("{}", obj),
+                Err(err) => println!("Runtime Error: {}", err),
+            }
+        }
+        Err(err) => println!("Parser Error: {}", err),
+    }
+}
 
 pub fn repl() -> io::Result<()> {
     let mut buffer = String::new();
+    let env = Rc::new(RefCell::new(Environment::empty()));
 
     loop {
         print!("{}", PROMPT);
@@ -18,20 +38,9 @@ pub fn repl() -> io::Result<()> {
 
         match buffer.as_str().trim() {
             QUIT => return Ok(()),
-            line => {
-                let lexer = Lexer::new(line.as_bytes());
-                let mut parser = Parser::new(lexer);
-                match parser.parse() {
-                    Ok(program) => {
-                        println!("{}", program);
-                        match eval(&program) {
-                            Ok(obj) => println!("{}", obj),
-                            Err(err) => println!("Runtime Error: {}", err),
-                        }
-                    }
-                    Err(err) => println!("Parser Error: {}", err),
-                }
-            }
+            CLEAR => env.borrow_mut().clear(),
+            ENV => println!("{}", env.borrow()),
+            line => run(env.clone(), line),
         }
 
         buffer.clear();

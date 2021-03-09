@@ -1,22 +1,16 @@
-use crate::interpreter::object::Object;
+use crate::interpreter::Environment;
+use crate::interpreter::Object;
+use crate::interpreter::{Result, RuntimeError};
 use crate::lexer::Token;
 use crate::parser::ast::*;
 
-use std::fmt;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-type Result<T> = std::result::Result<T, RuntimeError>;
+type Env = Rc<RefCell<Environment>>;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct RuntimeError(String);
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-pub fn eval(ast: &Program) -> Result<Object> {
-    match eval_block(ast)? {
+pub fn eval(env: Env, ast: Program) -> Result<Object> {
+    match eval_block(env, ast)? {
         Object::Return(obj) => {
             return Ok(*obj);
         }
@@ -24,11 +18,11 @@ pub fn eval(ast: &Program) -> Result<Object> {
     }
 }
 
-pub fn eval_block(block: &Block) -> Result<Object> {
+pub fn eval_block(env: Env, block: Block) -> Result<Object> {
     let mut obj = Object::Unit;
 
-    for stmt in &block.0 {
-        obj = match eval_stmt(stmt)? {
+    for stmt in block.0 {
+        obj = match eval_stmt(env.clone(), stmt)? {
             Object::Return(obj) => {
                 return Ok(Object::Return(obj));
             }
@@ -39,38 +33,82 @@ pub fn eval_block(block: &Block) -> Result<Object> {
     Ok(obj)
 }
 
-fn eval_stmt(stmt: &Statement) -> Result<Object> {
+fn eval_stmt(env: Env, stmt: Statement) -> Result<Object> {
     match stmt {
+        Statement::Let { name, expr } => {
+            let obj = eval_expr(env.clone(), expr)?;
+            env.borrow_mut().set(name, obj);
+            Ok(Object::Unit)
+        }
         Statement::Return(expr) => {
-            let obj = eval_expr(expr)?;
+            let obj = eval_expr(env, expr)?;
             Ok(Object::Return(Box::new(obj)))
         }
         Statement::Stmt(expr) => {
-            eval_expr(expr)?;
+            eval_expr(env, expr)?;
             Ok(Object::Unit)
         }
-        Statement::Expr(expr) => eval_expr(expr),
-        _ => panic!(),
+        Statement::Expr(expr) => eval_expr(env, expr),
     }
 }
 
-fn eval_expr(expr: &Expression) -> Result<Object> {
+fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
     match expr {
-        Expression::Integer(n) => Ok(Object::Integer(*n)),
-        Expression::Boolean(b) => Ok(Object::Boolean(*b)),
-        Expression::Prefix { operator, expr } => eval_prefix_expr(operator, expr),
+        Expression::Name(name) => env
+            .borrow()
+            .get(&name)
+            .ok_or(RuntimeError(format!("unknown identifier: `{}`", name))),
+        Expression::Integer(n) => Ok(Object::Integer(n)),
+        Expression::Boolean(b) => Ok(Object::Boolean(b)),
+        Expression::Prefix { operator, expr } => eval_prefix_expr(env, operator, *expr),
         Expression::Infix {
             left,
             operator,
             right,
-        } => eval_infix_expr(left, operator, right),
-        Expression::If { cond, yes, no } => eval_if_expr(cond, yes, no),
-        _ => panic!(),
+        } => eval_infix_expr(env, *left, operator, *right),
+        Expression::If { cond, yes, no } => eval_if_expr(env, *cond, yes, no),
+        Expression::Function { params, body } => Ok(Object::Function {
+            env: env.clone(),
+            params,
+            body,
+        }),
+        Expression::Call { function, args } => {
+            let function = eval_expr(env.clone(), *function)?;
+            let args = eval_exprs(env, args)?;
+
+            match function {
+                Object::Function { env, params, body } => {
+                    let mut env = Environment::new(env);
+
+                    for (name, arg) in params.iter().zip(args) {
+                        env.set(name.clone(), arg);
+                    }
+
+                    let obj = eval_block(Rc::new(RefCell::new(env)), body)?;
+                    if let Object::Return(obj) = obj {
+                        Ok(*obj)
+                    } else {
+                        Ok(obj)
+                    }
+                }
+                _ => Err(RuntimeError(format!("type mismatch: `{}(...)`", function))),
+            }
+        }
     }
 }
 
-fn eval_prefix_expr(operator: &Token, expr: &Expression) -> Result<Object> {
-    let object = eval_expr(expr)?;
+fn eval_exprs(env: Env, exprs: Vec<Expression>) -> Result<Vec<Object>> {
+    let mut result = vec![];
+
+    for expr in exprs {
+        result.push(eval_expr(env.clone(), expr)?);
+    }
+
+    Ok(result)
+}
+
+fn eval_prefix_expr(env: Env, operator: Token, expr: Expression) -> Result<Object> {
+    let object = eval_expr(env, expr)?;
     match (operator, object) {
         (Token::Bang, Object::Boolean(b)) => Ok(Object::Boolean(!b)),
         (Token::Minus, Object::Integer(n)) => Ok(Object::Integer(-n)),
@@ -81,9 +119,14 @@ fn eval_prefix_expr(operator: &Token, expr: &Expression) -> Result<Object> {
     }
 }
 
-fn eval_infix_expr(left: &Expression, operator: &Token, right: &Expression) -> Result<Object> {
-    let left = eval_expr(left)?;
-    let right = eval_expr(right)?;
+fn eval_infix_expr(
+    env: Env,
+    left: Expression,
+    operator: Token,
+    right: Expression,
+) -> Result<Object> {
+    let left = eval_expr(env.clone(), left)?;
+    let right = eval_expr(env, right)?;
 
     #[rustfmt::skip]
     let object = match (left, operator, right) {
@@ -107,14 +150,14 @@ fn eval_infix_expr(left: &Expression, operator: &Token, right: &Expression) -> R
     Ok(object)
 }
 
-fn eval_if_expr(cond: &Expression, yes: &Block, no: &Option<Block>) -> Result<Object> {
-    let cond = eval_expr(cond)?;
+fn eval_if_expr(env: Env, cond: Expression, yes: Block, no: Option<Block>) -> Result<Object> {
+    let cond = eval_expr(env.clone(), cond)?;
     if let Object::Boolean(cond) = cond {
         if cond {
-            eval_block(yes)
+            eval_block(env, yes)
         } else {
             if let Some(no) = no {
-                eval_block(no)
+                eval_block(env, no)
             } else {
                 Ok(Object::Unit)
             }
@@ -134,389 +177,126 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    use lazy_static::lazy_static;
     use test_case::test_case;
 
-    #[rustfmt::skip]
-    lazy_static! {
-        // Literal
-        static ref LITERAL_01: (&'static [u8], Object) =
-        (
-            b"5",
-            Object::Integer(5)
-        );
-
-        static ref LITERAL_02: (&'static [u8], Object) =
-        (
-            b"true",
-            Object::Boolean(true)
-        );
-
-        static ref LITERAL_03: (&'static [u8], Object) =
-        (
-            b"false",
-            Object::Boolean(false)
-        );
-
-        // Prefix Expression
-        static ref PREFIX_01: (&'static [u8], Object) =
-        (
-            b"!true",
-            Object::Boolean(false)
-        );
-
-        static ref PREFIX_02: (&'static [u8], Object) =
-        (
-            b"!false",
-            Object::Boolean(true)
-        );
-
-        static ref PREFIX_03: (&'static [u8], Object) =
-        (
-            b"!!true",
-            Object::Boolean(true)
-        );
-
-        static ref PREFIX_04: (&'static [u8], Object) =
-        (
-            b"!!false",
-            Object::Boolean(false)
-        );
-
-        static ref PREFIX_05: (&'static [u8], Object) =
-        (
-            b"-5",
-            Object::Integer(-5)
-        );
-
-        static ref PREFIX_06: (&'static [u8], Object) =
-        (
-            b"--5",
-            Object::Integer(5)
-        );
-
-        // Infix Expression
-        static ref INFIX_01: (&'static [u8], Object) =
-        (
-            b"5 + 5 + 5 + 5 - 10",
-            Object::Integer(10)
-        );
-
-        static ref INFIX_02: (&'static [u8], Object) =
-        (
-            b"2 * 2 * 2 * 2 * 2",
-            Object::Integer(32)
-        );
-
-        static ref INFIX_03: (&'static [u8], Object) =
-        (
-            b"-50 + 100 + -50",
-            Object::Integer(0)
-        );
-
-        static ref INFIX_04: (&'static [u8], Object) =
-        (
-            b"5 * 2 + 10",
-            Object::Integer(20)
-        );
-
-        static ref INFIX_05: (&'static [u8], Object) =
-        (
-            b"5 + 2 * 10",
-            Object::Integer(25)
-        );
-
-        static ref INFIX_06: (&'static [u8], Object) =
-        (
-            b"20 + 2 * -10",
-            Object::Integer(0)
-        );
-
-        static ref INFIX_07: (&'static [u8], Object) =
-        (
-            b"50 / 2 * 2 + 10",
-            Object::Integer(60)
-        );
-
-        static ref INFIX_08: (&'static [u8], Object) =
-        (
-            b"2 * (5 + 10)",
-            Object::Integer(30)
-        );
-
-        static ref INFIX_09: (&'static [u8], Object) =
-        (
-            b"3 * 3 * 3 + 10",
-            Object::Integer(37)
-        );
-
-        static ref INFIX_10: (&'static [u8], Object) =
-        (
-            b"3 * (3 * 3) + 10",
-            Object::Integer(37)
-        );
-
-        static ref INFIX_11: (&'static [u8], Object) =
-        (
-            b"(5 + 10 * 2 + 15 / 3) * 2 + -10",
-            Object::Integer(50)
-        );
-
-        static ref INFIX_12: (&'static [u8], Object) =
-        (
-            b"1 < 2",
-            Object::Boolean(true)
-        );
-
-        static ref INFIX_13: (&'static [u8], Object) =
-        (
-            b"1 > 2",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_14: (&'static [u8], Object) =
-        (
-            b"1 < 1",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_15: (&'static [u8], Object) =
-        (
-            b"1 > 1",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_16: (&'static [u8], Object) =
-        (
-            b"1 == 1",
-            Object::Boolean(true)
-        );
-
-        static ref INFIX_17: (&'static [u8], Object) =
-        (
-            b"1 != 1",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_18: (&'static [u8], Object) =
-        (
-            b"1 == 2",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_19: (&'static [u8], Object) =
-        (
-            b"1 != 2",
-            Object::Boolean(true)
-        );
-
-        static ref INFIX_20: (&'static [u8], Object) =
-        (
-            b"true == true",
-            Object::Boolean(true)
-        );
-
-        static ref INFIX_21: (&'static [u8], Object) =
-        (
-            b"false == true",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_22: (&'static [u8], Object) =
-        (
-            b"true == false",
-            Object::Boolean(false)
-        );
-
-        static ref INFIX_23: (&'static [u8], Object) =
-        (
-            b"true != false",
-            Object::Boolean(true)
-        );
-
-        static ref INFIX_24: (&'static [u8], Object) =
-        (
-            b"false != true",
-            Object::Boolean(true)
-        );
-
-        // If Expr
-        static ref IF_EXPR_01: (&'static [u8], Object) =
-        (
-            b"if (true) { 10 }",
-            Object::Integer(10)
-        );
-
-        static ref IF_EXPR_02: (&'static [u8], Object) =
-        (
-            b"if (false) { 10 }",
-            Object::Unit
-        );
-
-        static ref IF_EXPR_03: (&'static [u8], Object) =
-        (
-            b"if (1 < 2) { 10 }",
-            Object::Integer(10)
-        );
-
-        static ref IF_EXPR_04: (&'static [u8], Object) =
-        (
-            b"if (1 > 2) { 10 }",
-            Object::Unit
-        );
-
-        static ref IF_EXPR_05: (&'static [u8], Object) =
-        (
-            b"if (1 > 2) { 10 } else { 20 }",
-            Object::Integer(20)
-        );
-
-        static ref IF_EXPR_06: (&'static [u8], Object) =
-        (
-            b"if (1 < 2) { 10 } else { 20 }",
-            Object::Integer(10)
-        );
-
-        // Return Statement
-        static ref RETURN_STMT_01: (&'static [u8], Object) =
-        (
-            b"return 10;",
-            Object::Integer(10)
-        );
-
-        static ref RETURN_STMT_02: (&'static [u8], Object) =
-        (
-            b"return 10; 9;",
-            Object::Integer(10)
-        );
-
-        static ref RETURN_STMT_03: (&'static [u8], Object) =
-        (
-            b"return 2 * 5; 9;",
-            Object::Integer(10)
-        );
-
-        static ref RETURN_STMT_04: (&'static [u8], Object) =
-        (
-            b"9; return 2 * 5; 9;",
-            Object::Integer(10)
-        );
-
-        static ref RETURN_STMT_05: (&'static [u8], Object) =
-        (
-            b"if (10 > 1) {\n\
-                  if(10 > 1) {\n\
-                      return 10;\n\
-                  }\n\
-                  \n\
-                  return 1;\n\
-              }",
-            Object::Integer(10)
-        );
-
-        // Error Handling
-        static ref ERROR_01: (&'static [u8], RuntimeError) =
-        (
-            b"5 + true",
-            RuntimeError("type mismatch: `5 + true`".to_string())
-        );
-
-        static ref ERROR_02: (&'static [u8], RuntimeError) =
-        (
-            b"5 + true; 5;",
-            RuntimeError("type mismatch: `5 + true`".to_string())
-        );
-
-        static ref ERROR_03: (&'static [u8], RuntimeError) =
-        (
-            b"-true",
-            RuntimeError("type mismatch: `-true`".to_string())
-        );
-
-        static ref ERROR_04: (&'static [u8], RuntimeError) =
-        (
-            b"!5",
-            RuntimeError("type mismatch: `!5`".to_string())
-        );
-
-        static ref ERROR_05: (&'static [u8], RuntimeError) =
-        (
-            b"5; true + false; 5",
-            RuntimeError("type mismatch: `true + false`".to_string())
-        );
-
-        static ref ERROR_06: (&'static [u8], RuntimeError) =
-        (
-            b"if (1) { 10 }",
-            RuntimeError("type mismatch: `if (1) {...}`".to_string())
-        );
-    }
-
-    #[test_case(LITERAL_01.0    , &LITERAL_01.1     ; "integer literal")]
-    #[test_case(LITERAL_02.0    , &LITERAL_02.1     ; "true literal"   )]
-    #[test_case(LITERAL_03.0    , &LITERAL_03.1     ; "false literal"  )]
-    #[test_case(PREFIX_01.0     , &PREFIX_01.1      ; "prefix bang 01" )]
-    #[test_case(PREFIX_02.0     , &PREFIX_02.1      ; "prefix bang 02" )]
-    #[test_case(PREFIX_03.0     , &PREFIX_03.1      ; "prefix bang 03" )]
-    #[test_case(PREFIX_04.0     , &PREFIX_04.1      ; "prefix bang 04" )]
-    #[test_case(PREFIX_05.0     , &PREFIX_05.1      ; "prefix minus 01")]
-    #[test_case(PREFIX_06.0     , &PREFIX_06.1      ; "prefix minus 02")]
-    #[test_case(INFIX_01.0      , &INFIX_01.1       ; "infix 01"       )]
-    #[test_case(INFIX_02.0      , &INFIX_02.1       ; "infix 02"       )]
-    #[test_case(INFIX_03.0      , &INFIX_03.1       ; "infix 03"       )]
-    #[test_case(INFIX_04.0      , &INFIX_04.1       ; "infix 04"       )]
-    #[test_case(INFIX_05.0      , &INFIX_05.1       ; "infix 05"       )]
-    #[test_case(INFIX_06.0      , &INFIX_06.1       ; "infix 06"       )]
-    #[test_case(INFIX_07.0      , &INFIX_07.1       ; "infix 07"       )]
-    #[test_case(INFIX_08.0      , &INFIX_08.1       ; "infix 08"       )]
-    #[test_case(INFIX_09.0      , &INFIX_09.1       ; "infix 09"       )]
-    #[test_case(INFIX_10.0      , &INFIX_10.1       ; "infix 10"       )]
-    #[test_case(INFIX_11.0      , &INFIX_11.1       ; "infix 11"       )]
-    #[test_case(INFIX_12.0      , &INFIX_12.1       ; "infix 12"       )]
-    #[test_case(INFIX_13.0      , &INFIX_13.1       ; "infix 13"       )]
-    #[test_case(INFIX_14.0      , &INFIX_14.1       ; "infix 14"       )]
-    #[test_case(INFIX_15.0      , &INFIX_15.1       ; "infix 15"       )]
-    #[test_case(INFIX_16.0      , &INFIX_16.1       ; "infix 16"       )]
-    #[test_case(INFIX_17.0      , &INFIX_17.1       ; "infix 17"       )]
-    #[test_case(INFIX_18.0      , &INFIX_18.1       ; "infix 18"       )]
-    #[test_case(INFIX_19.0      , &INFIX_19.1       ; "infix 19"       )]
-    #[test_case(INFIX_20.0      , &INFIX_20.1       ; "infix 20"       )]
-    #[test_case(INFIX_21.0      , &INFIX_21.1       ; "infix 21"       )]
-    #[test_case(INFIX_22.0      , &INFIX_22.1       ; "infix 22"       )]
-    #[test_case(INFIX_23.0      , &INFIX_23.1       ; "infix 23"       )]
-    #[test_case(INFIX_24.0      , &INFIX_24.1       ; "infix 24"       )]
-    #[test_case(IF_EXPR_01.0    , &IF_EXPR_01.1     ; "if expr 01"     )]
-    #[test_case(IF_EXPR_02.0    , &IF_EXPR_02.1     ; "if expr 02"     )]
-    #[test_case(IF_EXPR_03.0    , &IF_EXPR_03.1     ; "if expr 03"     )]
-    #[test_case(IF_EXPR_04.0    , &IF_EXPR_04.1     ; "if expr 04"     )]
-    #[test_case(IF_EXPR_05.0    , &IF_EXPR_05.1     ; "if expr 05"     )]
-    #[test_case(IF_EXPR_06.0    , &IF_EXPR_06.1     ; "if expr 06"     )]
-    #[test_case(RETURN_STMT_01.0, &RETURN_STMT_01.1 ; "return stmt 01" )]
-    #[test_case(RETURN_STMT_02.0, &RETURN_STMT_02.1 ; "return stmt 02" )]
-    #[test_case(RETURN_STMT_03.0, &RETURN_STMT_03.1 ; "return stmt 03" )]
-    #[test_case(RETURN_STMT_04.0, &RETURN_STMT_04.1 ; "return stmt 04" )]
-    #[test_case(RETURN_STMT_05.0, &RETURN_STMT_05.1 ; "return stmt 05" )]
-    fn test(input: &[u8], expected: &Object) {
+    #[test_case(b"5"    , Object::Integer(5)     ; "integer literal")]
+    #[test_case(b"true" , Object::Boolean(true)  ; "true literal"   )]
+    #[test_case(b"false", Object::Boolean(false) ; "false literal"  )]
+    #[test_case(
+        b"fn(x) { x + 2 }",
+        Object::Function {
+            env: Rc::new(RefCell::new(Environment::empty())),
+            params: vec![
+                "x".to_string()
+            ],
+            body: block(vec![
+                expr_stmt(
+                    infix(
+                        name("x"),
+                        Token::Plus,
+                        integer(2),
+                    )
+                )
+            ])
+        } ;
+        "function literal"
+    )]
+    #[test_case(b"!true"  , Object::Boolean(false); "prefix bang 01")]
+    #[test_case(b"!false" , Object::Boolean(true) ; "prefix bang 02")]
+    #[test_case(b"!!true" , Object::Boolean(true) ; "prefix bang 03")]
+    #[test_case(b"!!false", Object::Boolean(false); "prefix bang 04")]
+    #[test_case(b"-5" , Object::Integer(-5); "prefix minus 01")]
+    #[test_case(b"--5", Object::Integer(5) ; "prefix minus 02")]
+    #[test_case(b"5 + 5 + 5 + 5 - 10"             , Object::Integer(10)    ; "infix 01")]
+    #[test_case(b"2 * 2 * 2 * 2 * 2"              , Object::Integer(32)    ; "infix 02")]
+    #[test_case(b"-50 + 100 + -50"                , Object::Integer(0)     ; "infix 03")]
+    #[test_case(b"5 * 2 + 10"                     , Object::Integer(20)    ; "infix 04")]
+    #[test_case(b"5 + 2 * 10"                     , Object::Integer(25)    ; "infix 05")]
+    #[test_case(b"20 + 2 * -10"                   , Object::Integer(0)     ; "infix 06")]
+    #[test_case(b"50 / 2 * 2 + 10"                , Object::Integer(60)    ; "infix 07")]
+    #[test_case(b"2 * (5 + 10)"                   , Object::Integer(30)    ; "infix 08")]
+    #[test_case(b"3 * 3 * 3 + 10"                 , Object::Integer(37)    ; "infix 09")]
+    #[test_case(b"3 * (3 * 3) + 10"               , Object::Integer(37)    ; "infix 10")]
+    #[test_case(b"(5 + 10 * 2 + 15 / 3) * 2 + -10", Object::Integer(50)    ; "infix 11")]
+    #[test_case(b"1 < 2"                          , Object::Boolean(true)  ; "infix 12")]
+    #[test_case(b"1 > 2"                          , Object::Boolean(false) ; "infix 13")]
+    #[test_case(b"1 < 1"                          , Object::Boolean(false) ; "infix 14")]
+    #[test_case(b"1 > 1"                          , Object::Boolean(false) ; "infix 15")]
+    #[test_case(b"1 == 1"                         , Object::Boolean(true)  ; "infix 16")]
+    #[test_case(b"1 != 1"                         , Object::Boolean(false) ; "infix 17")]
+    #[test_case(b"1 == 2"                         , Object::Boolean(false) ; "infix 18")]
+    #[test_case(b"1 != 2"                         , Object::Boolean(true)  ; "infix 19")]
+    #[test_case(b"true == true"                   , Object::Boolean(true)  ; "infix 20")]
+    #[test_case(b"false == true"                  , Object::Boolean(false) ; "infix 21")]
+    #[test_case(b"true == false"                  , Object::Boolean(false) ; "infix 22")]
+    #[test_case(b"true != false"                  , Object::Boolean(true)  ; "infix 23")]
+    #[test_case(b"false != true"                  , Object::Boolean(true)  ; "infix 24")]
+    #[test_case(b"if (true) { 10 }"             , Object::Integer(10) ; "if expr 01")]
+    #[test_case(b"if (false) { 10 }"            , Object::Unit        ; "if expr 02")]
+    #[test_case(b"if (1 < 2) { 10 }"            , Object::Integer(10) ; "if expr 03")]
+    #[test_case(b"if (1 > 2) { 10 }"            , Object::Unit        ; "if expr 04")]
+    #[test_case(b"if (1 > 2) { 10 } else { 20 }", Object::Integer(20) ; "if expr 05")]
+    #[test_case(b"if (1 < 2) { 10 } else { 20 }", Object::Integer(10) ; "if expr 06")]
+    #[test_case(b"return 10;"      , Object::Integer(10) ; "return stmt 01")]
+    #[test_case(b"return 10; 9;"   , Object::Integer(10) ; "return stmt 02")]
+    #[test_case(b"return 2 * 5; 9;", Object::Integer(10) ; "return stmt 03")]
+    #[test_case(b"9; return 10; 9;", Object::Integer(10) ; "return stmt 04")]
+    #[test_case(
+        b"if (10 > 1) {\n\
+                if(10 > 1) {\n\
+                    return 10;\n\
+                }\n\
+                \n\
+                return 1;\n\
+            }",
+        Object::Integer(10) ;
+        "return stmt 05"
+    )]
+    #[test_case(b"let a = 5; a"                              , Object::Integer(5)  ; "let stmt 01")]
+    #[test_case(b"let a = 5 * 5; a"                          , Object::Integer(25) ; "let stmt 02")]
+    #[test_case(b"let a = 5; let b = a; b"                   , Object::Integer(5)  ; "let stmt 03")]
+    #[test_case(b"let a = 5; let b = a; let c = a + b + 5; c", Object::Integer(15) ; "let stmt 04")]
+    #[test_case(b"let identity = fn(x) { x }; identity(5)"            , Object::Integer(5)  ; "call expr 01")]
+    #[test_case(b"let identity = fn(x) { return x; }; identity(5)"    , Object::Integer(5)  ; "call expr 02")]
+    #[test_case(b"let double = fn(x) { x * 2 }; double(5)"            , Object::Integer(10) ; "call expr 03")]
+    #[test_case(b"let add = fn(x, y) { x + y }; add(5, 5)"            , Object::Integer(10) ; "call expr 04")]
+    #[test_case(b"let add = fn(x, y) { x + y }; add(5 + 5, add(5, 5))", Object::Integer(20) ; "call expr 05")]
+    #[test_case(b"fn(x) { x }(5)"                                     , Object::Integer(5)  ; "call expr 06")]
+    #[test_case(
+        b"let adder = fn(x) {\n\
+              fn(y) { x + y}\n\
+          };\n\
+          \n\
+          let add_two = adder(2);\n\
+          add_two(2)"
+        ,
+        Object::Integer(4) ;
+        "closure"
+    )]
+    fn test(input: &[u8], expected: Object) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
         let ast = parser.parse().unwrap();
-        let object = eval(&ast).unwrap();
+        let env = Rc::new(RefCell::new(Environment::empty()));
+        let object = eval(env, ast).unwrap();
 
-        assert_eq!(&object, expected)
+        assert_eq!(object, expected)
     }
 
-    #[test_case(ERROR_01.0, &ERROR_01.1 ; "error 01" )]
-    #[test_case(ERROR_02.0, &ERROR_02.1 ; "error 02" )]
-    #[test_case(ERROR_03.0, &ERROR_03.1 ; "error 03" )]
-    #[test_case(ERROR_04.0, &ERROR_04.1 ; "error 04" )]
-    #[test_case(ERROR_05.0, &ERROR_05.1 ; "error 05" )]
-    #[test_case(ERROR_06.0, &ERROR_06.1 ; "error 06" )]
-    fn test_error(input: &[u8], expected: &RuntimeError) {
+    #[test_case(b"5 + true"          , RuntimeError("type mismatch: `5 + true`".to_string())     ; "error 01")]
+    #[test_case(b"5 + true; 5;"      , RuntimeError("type mismatch: `5 + true`".to_string())     ; "error 02")]
+    #[test_case(b"-true"             , RuntimeError("type mismatch: `-true`".to_string())        ; "error 03")]
+    #[test_case(b"!5"                , RuntimeError("type mismatch: `!5`".to_string())           ; "error 04")]
+    #[test_case(b"5; true + false; 5", RuntimeError("type mismatch: `true + false`".to_string()) ; "error 05")]
+    #[test_case(b"if (1) { 10 }"     , RuntimeError("type mismatch: `if (1) {...}`".to_string()) ; "error 06")]
+    #[test_case(b"foobar"            , RuntimeError("unknown identifier: `foobar`".to_string())  ; "error 07")]
+    fn test_error(input: &[u8], expected: RuntimeError) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
         let ast = parser.parse().unwrap();
-        let error = eval(&ast).unwrap_err();
+        let env = Rc::new(RefCell::new(Environment::empty()));
+        let error = eval(env, ast).unwrap_err();
 
-        assert_eq!(&error, expected)
+        assert_eq!(error, expected)
     }
 }

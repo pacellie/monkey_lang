@@ -1,24 +1,6 @@
 use crate::lexer::{Lexer, Token};
 use crate::parser::ast::*;
-
-use std::{fmt, num};
-
-type Result<T> = std::result::Result<T, ParseError>;
-
-#[derive(Debug)]
-pub struct ParseError(String);
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<num::ParseIntError> for ParseError {
-    fn from(error: num::ParseIntError) -> Self {
-        ParseError(error.to_string())
-    }
-}
+use crate::parser::error::{ParseError, Result};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
