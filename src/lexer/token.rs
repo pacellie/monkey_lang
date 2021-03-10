@@ -5,7 +5,7 @@ pub enum Token {
     Eof,
     Illegal(String),
 
-    // Identifiers and literals
+    // Identifiers and Literals
     Ident(String),
     Int(String),
 

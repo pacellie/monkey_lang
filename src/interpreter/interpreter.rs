@@ -85,9 +85,10 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
                 Object::Function { env, params, body } => {
                     let mut env = Environment::new(env);
 
-                    for (name, arg) in params.iter().zip(args) {
-                        env.set(name.clone(), arg);
-                    }
+                    params
+                        .iter()
+                        .zip(args)
+                        .for_each(|(name, arg)| env.set(name.clone(), arg));
 
                     let obj = eval_block(Rc::new(RefCell::new(env)), body)?;
                     if let Object::Return(obj) = obj {

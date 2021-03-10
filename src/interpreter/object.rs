@@ -28,6 +28,7 @@ impl fmt::Display for Object {
             Object::Unit => write!(f, "Unit"),
             Object::Return(obj) => write!(f, "Return {}", obj),
             Object::Function { params, body, .. } => {
+                // Do not print `env` due to cyclic dependencies
                 write!(f, "fn({}) {{ {} }}", params.iter().join(", "), body)
             }
         }

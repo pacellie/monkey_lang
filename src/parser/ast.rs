@@ -91,6 +91,8 @@ impl fmt::Display for Expression {
     }
 }
 
+// Smart Constructors - mainly used for parser tests
+
 pub fn let_stmt<S: Into<String>>(name: S, expr: Expression) -> Statement {
     Statement::Let {
         name: name.into(),

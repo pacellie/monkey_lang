@@ -9,7 +9,7 @@ enum Precedence {
     LessGreater, // >, <
     Sum,         // +
     Product,     // *
-    Prefix,      //-, !
+    Prefix,      // -, !
     Call,        // f()
 }
 
@@ -26,11 +26,24 @@ impl Precedence {
     }
 }
 
+/*
+   Invariant:
+   (1) A parsing function is only called if `current` contains a valid
+     first token according to the associated grammar rule.
+
+   (2) If a parsing function returns Ok(...), the token `current` contains
+     the first token `after` the associated grammer rule.
+
+   E.g. parse_let_stmt: let <name> = <expr> ;
+   (1) parse_let_stmt will only be called if `current` contains the `Token::Let`
+   (2) if parse_let_stmt returns successfully `current` contains the first token
+       after `Token::Semicolon`
+*/
 #[derive(Debug)]
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
-    peek: Token,
+    peek: Token, // TODO: peek not necessary?
 }
 
 impl<'a> Parser<'a> {
@@ -52,44 +65,24 @@ impl<'a> Parser<'a> {
         self.peek = self.lexer.next().unwrap();
     }
 
-    fn peek_identifer(&mut self) -> Result<String> {
-        match self.peek.clone() {
-            Token::Ident(name) => {
-                self.advance();
-                Ok(name)
-            }
-            _ => Err(ParseError(format!(
-                "Expected `identifier`, got `{}` instead.",
-                self.peek
-            ))),
-        }
-    }
-
-    fn peek_acknowledge(&mut self, expected: Token) -> Result<()> {
-        if self.peek == expected {
+    fn advance_if(&mut self, token: &Token) -> Result<()> {
+        if &self.current == token {
             self.advance();
             Ok(())
         } else {
             Err(ParseError(format!(
                 "Expected `{}`, got `{}` instead.",
-                expected, self.peek
+                token, self.current
             )))
         }
     }
 
+    // <stmt>*
     pub fn parse(&mut self) -> Result<Program> {
-        let mut stmts = vec![];
-
-        while self.current != Token::Eof {
-            let stmt = self.parse_stmt()?;
-            stmts.push(stmt);
-
-            self.advance();
-        }
-
-        Ok(block(stmts))
+        self.parse_block_stmt()
     }
 
+    // <let_stmt> | <return_stmt> | <stmt> | <expr>
     fn parse_stmt(&mut self) -> Result<Statement> {
         match self.current {
             Token::Let => self.parse_let_stmt(),
@@ -98,68 +91,89 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // let <expr> = <expr>;
+    // <let><name><=><expr><;>
     fn parse_let_stmt(&mut self) -> Result<Statement> {
-        let name = self.peek_identifer()?;
-        self.peek_acknowledge(Token::Assign)?;
-        self.advance();
+        self.advance(); // advance over `Token::Let`
+
+        let name = self.parse_name()?;
+
+        self.advance_if(&Token::Assign)?; // advance over `Token::Assign`
 
         let expr = self.parse_expr(Precedence::Lowest)?;
 
-        self.peek_acknowledge(Token::Semicolon)?;
+        self.advance_if(&Token::Semicolon)?; // advance over `Token::Semicolon`
 
         Ok(let_stmt(name, expr))
     }
 
-    // return <epxr>;
+    // <return><epxr><;>
     fn parse_return_stmt(&mut self) -> Result<Statement> {
-        self.advance();
+        self.advance(); // advance over `Token::Return`
 
         let expr = self.parse_expr(Precedence::Lowest)?;
 
-        self.peek_acknowledge(Token::Semicolon)?;
+        self.advance_if(&Token::Semicolon)?; // advance over `Token::Semicolon`
 
         Ok(return_stmt(expr))
     }
 
     // <stmt>*
     fn parse_block_stmt(&mut self) -> Result<Block> {
-        self.advance();
-
-        let mut stmts = vec![];
-
-        while self.current != Token::RBrace && self.current != Token::Eof {
-            let stmt = self.parse_stmt()?;
-            stmts.push(stmt);
-            self.advance();
-        }
-
-        Ok(block(stmts))
+        self.parse_many(|parser| parser.parse_stmt())
+            .map(|stmts| block(stmts))
     }
 
-    // <expr>; | <expr>
+    // <expr><;> | <expr>
     fn parse_expr_stmt(&mut self) -> Result<Statement> {
         let expr = self.parse_expr(Precedence::Lowest)?;
 
-        if self.peek == Token::Semicolon {
-            self.advance();
+        if self.current == Token::Semicolon {
+            self.advance(); // advance over `Token::Semicolon`
             Ok(stmt(expr))
         } else {
             Ok(expr_stmt(expr))
         }
     }
 
+    // <name>
+    fn parse_name(&mut self) -> Result<String> {
+        match self.current.clone() {
+            Token::Ident(name) => {
+                self.advance(); // advance over `Token::Ident(...)`
+                Ok(name)
+            }
+            _ => {
+                return Err(ParseError(format!(
+                    "Expected `name`, got `{}` instead.",
+                    self.current
+                )))
+            }
+        }
+    }
+
+    // <expr>
     fn parse_expr(&mut self, precedence: Precedence) -> Result<Expression> {
-        #[rustfmt::skip]
-        let mut expr = match &self.current {
-            Token::Ident(s)    => name(s),
-            Token::Int(n)      => n.parse::<i32>().map(|n| integer(n))?,
-            Token::True                => boolean(true),
-            Token::False               => boolean(false),
-            Token::Function            => self.parse_function_expr()?,
-            Token::LParen              => self.parse_group_expr()?,
+        let mut expr = match self.current.clone() {
+            Token::Ident(s) => {
+                self.advance(); // advance over `Token::Ident(...)`
+                name(s)
+            }
+            Token::Int(n) => {
+                self.advance(); // advance over `Token::Int(...)`
+                n.parse::<i32>().map(|n| integer(n))?
+            }
+            Token::True => {
+                self.advance(); // advance over `Token::True`
+                boolean(true)
+            }
+            Token::False => {
+                self.advance(); // advance over `Token::False`
+                boolean(false)
+            }
+            Token::Function => self.parse_function_expr()?,
+            Token::LParen => self.parse_group_expr()?,
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
-            Token::If                  => self.parse_if_expr()?,
+            Token::If => self.parse_if_expr()?,
             _ => {
                 return Err(ParseError(format!(
                     "`{}` is not a valid start of an expression.",
@@ -168,8 +182,9 @@ impl<'a> Parser<'a> {
             }
         };
 
-        while self.peek != Token::Semicolon && precedence < Precedence::precedence(&self.peek) {
-            expr = match &self.peek {
+        while self.current != Token::Semicolon && precedence < Precedence::precedence(&self.current)
+        {
+            expr = match &self.current {
                 Token::Plus
                 | Token::Minus
                 | Token::Slash
@@ -177,14 +192,8 @@ impl<'a> Parser<'a> {
                 | Token::Eq
                 | Token::Neq
                 | Token::Lt
-                | Token::Gt => {
-                    self.advance();
-                    self.parse_infix_expr(expr)?
-                }
-                Token::LParen => {
-                    self.advance();
-                    self.parse_call_expr(expr)?
-                }
+                | Token::Gt => self.parse_infix_expr(expr)?,
+                Token::LParen => self.parse_call_expr(expr)?,
                 _ => expr,
             }
         }
@@ -195,54 +204,54 @@ impl<'a> Parser<'a> {
     // <un_op><expr>
     fn parse_prefix_expr(&mut self) -> Result<Expression> {
         let operator = self.current.clone();
-
-        self.advance();
+        self.advance(); // advance over `operator`
 
         let right = self.parse_expr(Precedence::Prefix)?;
 
         Ok(prefix(operator, right))
     }
 
-    // <expr><bin_op><expr>
+    // <bin_op><expr>
     fn parse_infix_expr(&mut self, left: Expression) -> Result<Expression> {
         let operator = self.current.clone();
-        let precedence = Precedence::precedence(&operator);
+        self.advance(); // advance over `operator`
 
-        self.advance();
+        let precedence = Precedence::precedence(&operator);
 
         let right = self.parse_expr(precedence)?;
 
         Ok(infix(left, operator, right))
     }
 
-    // (<expr>)
+    // <(><expr><)>
     fn parse_group_expr(&mut self) -> Result<Expression> {
-        self.advance();
+        self.advance(); // advance over `Token::LParen`
 
         let expr = self.parse_expr(Precedence::Lowest)?;
 
-        self.peek_acknowledge(Token::RParen)?;
+        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
 
         Ok(expr)
     }
 
-    // if (<expr>) { <block> } else { <block> } | if (<expr>) { <block> }
+    // <if><(><expr><)><{><block><}><else><{><block><}> | <if><(><expr><)><{><block><}>
     fn parse_if_expr(&mut self) -> Result<Expression> {
-        self.peek_acknowledge(Token::LParen)?;
-        self.advance();
+        self.advance(); // advance over `Token::If`
 
+        self.advance_if(&Token::LParen)?; // advance over `Token::LParen`
         let cond = self.parse_expr(Precedence::Lowest)?;
+        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
 
-        self.peek_acknowledge(Token::RParen)?;
-        self.peek_acknowledge(Token::LBrace)?;
-
+        self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
         let yes = self.parse_block_stmt()?;
+        self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
 
-        if self.peek == Token::Else {
-            self.advance();
-            self.peek_acknowledge(Token::LBrace)?;
+        if self.current == Token::Else {
+            self.advance(); // advance over `Token::Else`
 
+            self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
             let no = self.parse_block_stmt()?;
+            self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
 
             Ok(if_expr(cond, yes, Some(no)))
         } else {
@@ -250,60 +259,74 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // fn(<params>)<block>
+    // <fn><(><params><)><{><block><}>
     fn parse_function_expr(&mut self) -> Result<Expression> {
-        self.peek_acknowledge(Token::LParen)?;
+        self.advance(); // advance over `Token::Function`
 
+        self.advance_if(&Token::LParen)?; // advance over `Token::LParen`
         let params = self.parse_params()?;
+        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
 
-        self.peek_acknowledge(Token::LBrace)?;
-
+        self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
         let body = self.parse_block_stmt()?;
+        self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
 
         Ok(function(params, body))
     }
 
-    // (<param>(,<param>)*)*
+    // (<param>(<,><param>)*)*
     fn parse_params(&mut self) -> Result<Vec<String>> {
-        let mut params = vec![];
-
-        while self.peek != Token::RParen && self.peek != Token::Eof {
-            let param = self.peek_identifer()?;
-            params.push(param);
-
-            if self.peek != Token::RParen {
-                self.peek_acknowledge(Token::Comma)?;
-            }
-        }
-        self.advance();
-
-        Ok(params)
+        self.parse_many_sep_by(|parser| parser.parse_name(), Token::Comma)
     }
 
-    // <expr>(<args>)
-    fn parse_call_expr(&mut self, function: Expression) -> Result<Expression> {
+    // <(><args><)>
+    fn parse_call_expr(&mut self, expr: Expression) -> Result<Expression> {
+        self.advance(); // advance over `Token::LParen`
         let args = self.parse_args()?;
+        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
 
-        Ok(call(function, args))
+        Ok(call(expr, args))
     }
 
-    // (<expr>(,<expr>)*)*
+    // (<expr>(<,><expr>)*)*
     fn parse_args(&mut self) -> Result<Vec<Expression>> {
-        let mut args = vec![];
+        self.parse_many_sep_by(|parser| parser.parse_expr(Precedence::Lowest), Token::Comma)
+    }
 
-        while self.peek != Token::RParen && self.peek != Token::Eof {
-            self.advance();
+    // <f>*
+    fn parse_many<A, F>(&mut self, f: F) -> Result<Vec<A>>
+    where
+        F: Fn(&mut Parser) -> Result<A>,
+    {
+        let mut xs = vec![];
 
-            let arg = self.parse_expr(Precedence::Lowest)?;
-            args.push(arg);
-
-            if self.peek != Token::RParen {
-                self.peek_acknowledge(Token::Comma)?;
-            }
+        while let Ok(x) = f(self) {
+            xs.push(x);
         }
-        self.advance();
 
-        Ok(args)
+        Ok(xs)
+    }
+
+    // (<f>(<sep><f>)*)*
+    fn parse_many_sep_by<A, F>(&mut self, f: F, sep: Token) -> Result<Vec<A>>
+    where
+        F: Fn(&mut Parser) -> Result<A>,
+    {
+        let mut xs = vec![];
+
+        // try to parse the first element, return `vec![]` is this fails
+        if let Ok(x) = f(self) {
+            xs.push(x);
+        } else {
+            return Ok(xs);
+        }
+
+        // as long as there is a valid separator continue parsing elements
+        while let Ok(_) = self.advance_if(&sep) {
+            xs.push(f(self)?);
+        }
+
+        Ok(xs)
     }
 }
 
