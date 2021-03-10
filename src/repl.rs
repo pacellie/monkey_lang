@@ -10,6 +10,9 @@ const PROMPT: &str = ">> ";
 const QUIT: &str = "quit";
 const CLEAR: &str = "clear";
 const ENV: &str = "env";
+const CMDS: &str = "\tquit  := quit the repl\n\
+                    \tclear := clear the environment\n\
+                    \tenv   := print the environment\n";
 
 fn run(env: Rc<RefCell<Environment>>, input: &str) {
     let lexer = Lexer::new(input.as_bytes());
@@ -29,6 +32,8 @@ fn run(env: Rc<RefCell<Environment>>, input: &str) {
 pub fn repl() -> io::Result<()> {
     let mut buffer = String::new();
     let env = Rc::new(RefCell::new(Environment::empty()));
+
+    println!("{}", CMDS);
 
     loop {
         print!("{}", PROMPT);

@@ -3,7 +3,6 @@ use crate::interpreter::Object;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use itertools::Itertools;
@@ -29,17 +28,11 @@ pub struct Environment {
 
 impl PartialEq for Environment {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.parent == other.parent && self.map == other.map
     }
 }
 
 impl Eq for Environment {}
-
-impl Hash for Environment {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state)
-    }
-}
 
 impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -82,12 +75,12 @@ impl Environment {
         self.map.clear();
     }
 
-    fn format(&self, done: &mut HashSet<Environment>) -> String {
-        if done.contains(self) {
+    fn format(&self, done: &mut HashSet<usize>) -> String {
+        if done.contains(&self.id) {
             return "".to_string();
         }
 
-        done.insert(self.clone());
+        done.insert(self.id);
 
         let mut output = self
             .parent
