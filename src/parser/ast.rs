@@ -59,7 +59,7 @@ pub enum Expression {
         body: Block,
     },
     Call {
-        function: Box<Expression>,
+        expr: Box<Expression>,
         args: Vec<Expression>,
     },
 }
@@ -86,8 +86,8 @@ impl fmt::Display for Expression {
             Expression::Function { params, body } => {
                 write!(f, "fn ({}) {{ {} }}", params.iter().join(", "), body)
             }
-            Expression::Call { function, args } => {
-                write!(f, "{}({})", function, args.iter().join(", "))
+            Expression::Call { expr, args } => {
+                write!(f, "{}({})", expr, args.iter().join(", "))
             }
         }
     }
@@ -164,9 +164,9 @@ pub fn function<S: Into<String> + Clone>(params: Vec<S>, body: Block) -> Express
     }
 }
 
-pub fn call(function: Expression, args: Vec<Expression>) -> Expression {
+pub fn call(expr: Expression, args: Vec<Expression>) -> Expression {
     Expression::Call {
-        function: Box::new(function),
+        expr: Box::new(expr),
         args,
     }
 }

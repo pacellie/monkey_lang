@@ -1,11 +1,13 @@
 use crate::interpreter::Environment;
-use crate::interpreter::Object;
+use crate::interpreter::{BuiltinFunction, Object};
 use crate::interpreter::{Result, RuntimeError};
 use crate::lexer::Token;
 use crate::parser::ast::*;
 
 use std::cell::RefCell;
 use std::rc::Rc;
+
+use itertools::Itertools;
 
 type Env = Rc<RefCell<Environment>>;
 
@@ -54,10 +56,7 @@ fn eval_stmt(env: Env, stmt: Statement) -> Result<Object> {
 
 fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
     match expr {
-        Expression::Name(name) => env
-            .borrow()
-            .get(&name)
-            .ok_or(RuntimeError(format!("unknown identifier: `{}`", name))),
+        Expression::Name(name) => eval_name(env, name),
         Expression::Integer(n) => Ok(Object::Integer(n)),
         Expression::Boolean(b) => Ok(Object::Boolean(b)),
         Expression::String(s) => Ok(Object::String(s)),
@@ -73,35 +72,15 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
             params,
             body,
         }),
-        Expression::Call { function, args } => {
-            let function = eval_expr(env.clone(), *function)?;
-            let args: Result<Vec<Object>> = args
-                .iter()
-                .cloned()
-                .map(|expr| eval_expr(env.clone(), expr))
-                .collect();
-            let args = args?;
-
-            match function {
-                Object::Function { env, params, body } => {
-                    let mut env = Environment::new(env);
-
-                    params
-                        .iter()
-                        .zip(args)
-                        .for_each(|(name, arg)| env.set(name.clone(), arg));
-
-                    let obj = eval_block(Rc::new(RefCell::new(env)), body)?;
-                    if let Object::Return(obj) = obj {
-                        Ok(*obj)
-                    } else {
-                        Ok(obj)
-                    }
-                }
-                _ => Err(RuntimeError(format!("type mismatch: `{}(...)`", function))),
-            }
-        }
+        Expression::Call { expr, args } => eval_call_expr(env, *expr, args),
     }
+}
+
+fn eval_name(env: Env, name: String) -> Result<Object> {
+    env.borrow()
+        .get(&name)
+        .or_else(|| BuiltinFunction::builtin_by_name(&name).map(|builtin| Object::Builtin(builtin)))
+        .ok_or(RuntimeError(format!("unknown name: `{}`", name)))
 }
 
 fn eval_prefix_expr(env: Env, operator: Token, expr: Expression) -> Result<Object> {
@@ -166,6 +145,70 @@ fn eval_if_expr(env: Env, cond: Expression, yes: Block, no: Option<Block>) -> Re
             "type mismatch: `if ({}) {{...}}`",
             cond
         )))
+    }
+}
+
+fn eval_call_expr(env: Env, expr: Expression, args: Vec<Expression>) -> Result<Object> {
+    let obj = eval_expr(env.clone(), expr)?;
+    let args: Result<Vec<Object>> = args
+        .iter()
+        .cloned()
+        .map(|expr| eval_expr(env.clone(), expr))
+        .collect();
+    let args = args?;
+
+    match obj {
+        Object::Function { env, params, body } => eval_function_call_expr(env, params, body, args),
+        Object::Builtin(builtin) => eval_builtin_call_expr(env, builtin, args),
+        _ => Err(RuntimeError(format!(
+            "type mismatch: `{}({})`",
+            obj,
+            args.iter().join(", ")
+        ))),
+    }
+}
+
+fn eval_function_call_expr(
+    env: Env,
+    params: Vec<String>,
+    body: Block,
+    args: Vec<Object>,
+) -> Result<Object> {
+    if params.len() != args.len() {
+        return Err(RuntimeError(format!(
+            "wrong number of arguments: expected `{}`, got `{}`",
+            params.len(),
+            args.len()
+        )));
+    }
+
+    let mut env = Environment::new(env);
+
+    params
+        .iter()
+        .zip(args)
+        .for_each(|(name, arg)| env.set(name.clone(), arg));
+
+    let obj = eval_block(Rc::new(RefCell::new(env)), body)?;
+    if let Object::Return(obj) = obj {
+        Ok(*obj)
+    } else {
+        Ok(obj)
+    }
+}
+
+fn eval_builtin_call_expr(env: Env, builtin: BuiltinFunction, args: Vec<Object>) -> Result<Object> {
+    match builtin {
+        BuiltinFunction::Len => match &args[..] {
+            [obj] => match obj {
+                Object::String(s) => Ok(Object::Integer(s.len() as i32)),
+                _ => Err(RuntimeError(format!("type mismatch: `len({})`", obj))),
+            },
+            _ => Err(RuntimeError(format!(
+                "wrong number of arguments: expected `1`, got `{}`",
+                args.len()
+            ))),
+        },
     }
 }
 
@@ -278,6 +321,9 @@ mod tests {
         Object::Integer(4) ;
         "closure"
     )]
+    #[test_case(b"len(\"\")"           , Object::Integer(0)  ; "builtin len 01")]
+    #[test_case(b"len(\"four\")"       , Object::Integer(4)  ; "builtin len 02")]
+    #[test_case(b"len(\"hello world\")", Object::Integer(11) ; "builtin len 03")]
     fn test(input: &[u8], expected: Object) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
@@ -288,13 +334,15 @@ mod tests {
         assert_eq!(object, expected)
     }
 
-    #[test_case(b"5 + true"          , RuntimeError("type mismatch: `5 + true`".to_string())     ; "error 01")]
-    #[test_case(b"5 + true; 5;"      , RuntimeError("type mismatch: `5 + true`".to_string())     ; "error 02")]
-    #[test_case(b"-true"             , RuntimeError("type mismatch: `-true`".to_string())        ; "error 03")]
-    #[test_case(b"!5"                , RuntimeError("type mismatch: `!5`".to_string())           ; "error 04")]
-    #[test_case(b"5; true + false; 5", RuntimeError("type mismatch: `true + false`".to_string()) ; "error 05")]
-    #[test_case(b"if (1) { 10 }"     , RuntimeError("type mismatch: `if (1) {...}`".to_string()) ; "error 06")]
-    #[test_case(b"foobar"            , RuntimeError("unknown identifier: `foobar`".to_string())  ; "error 07")]
+    #[test_case(b"5 + true"              , RuntimeError("type mismatch: `5 + true`".to_string())                        ; "error 01")]
+    #[test_case(b"5 + true; 5;"          , RuntimeError("type mismatch: `5 + true`".to_string())                        ; "error 02")]
+    #[test_case(b"-true"                 , RuntimeError("type mismatch: `-true`".to_string())                           ; "error 03")]
+    #[test_case(b"!5"                    , RuntimeError("type mismatch: `!5`".to_string())                              ; "error 04")]
+    #[test_case(b"5; true + false; 5"    , RuntimeError("type mismatch: `true + false`".to_string())                    ; "error 05")]
+    #[test_case(b"if (1) { 10 }"         , RuntimeError("type mismatch: `if (1) {...}`".to_string())                    ; "error 06")]
+    #[test_case(b"foobar"                , RuntimeError("unknown name: `foobar`".to_string())                           ; "error 07")]
+    #[test_case(b"len(1)"                , RuntimeError("type mismatch: `len(1)`".to_string())                          ; "error 08")]
+    #[test_case(b"len(\"one\", \"two\")" , RuntimeError("wrong number of arguments: expected `1`, got `2`".to_string()) ; "error 09")]
     fn test_error(input: &[u8], expected: RuntimeError) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);

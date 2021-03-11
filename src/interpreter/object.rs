@@ -8,6 +8,28 @@ use std::rc::Rc;
 use itertools::Itertools;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuiltinFunction {
+    Len,
+}
+
+impl fmt::Display for BuiltinFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BuiltinFunction::Len => write!(f, "len"),
+        }
+    }
+}
+
+impl BuiltinFunction {
+    pub fn builtin_by_name(name: &str) -> Option<BuiltinFunction> {
+        match name {
+            "len" => Some(BuiltinFunction::Len),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object {
     Unit,
     Integer(i32),
@@ -19,6 +41,7 @@ pub enum Object {
         params: Vec<String>,
         body: Block,
     },
+    Builtin(BuiltinFunction),
 }
 
 impl fmt::Display for Object {
@@ -33,6 +56,7 @@ impl fmt::Display for Object {
                 // Do not print `env` due to cyclic dependencies
                 write!(f, "fn({}) {{ {} }}", params.iter().join(", "), body)
             }
+            Object::Builtin(builtin) => write!(f, "built-in: {}", builtin),
         }
     }
 }
