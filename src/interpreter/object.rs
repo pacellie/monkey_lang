@@ -9,9 +9,10 @@ use itertools::Itertools;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Object {
+    Unit,
     Integer(i32),
     Boolean(bool),
-    Unit,
+    String(String),
     Return(Box<Object>),
     Function {
         env: Rc<RefCell<Environment>>,
@@ -23,9 +24,10 @@ pub enum Object {
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Object::Unit => write!(f, "Unit"),
             Object::Integer(n) => write!(f, "{}", n),
             Object::Boolean(b) => write!(f, "{}", b),
-            Object::Unit => write!(f, "Unit"),
+            Object::String(s) => write!(f, "\"{}\"", s),
             Object::Return(obj) => write!(f, "Return {}", obj),
             Object::Function { params, body, .. } => {
                 // Do not print `env` due to cyclic dependencies

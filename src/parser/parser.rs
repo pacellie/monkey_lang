@@ -170,6 +170,10 @@ impl<'a> Parser<'a> {
                 self.advance(); // advance over `Token::False`
                 boolean(false)
             }
+            Token::String(s) => {
+                self.advance(); // advance over `Token::String(...)`
+                string(s)
+            }
             Token::Function => self.parse_function_expr()?,
             Token::LParen => self.parse_group_expr()?,
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
@@ -429,6 +433,11 @@ mod tests {
             )
         )]) ;
         "literal 08"
+    )]
+    #[test_case(
+        b"\"hello world\"",
+        block(vec![expr_stmt(string("hello world".to_string()))]) ;
+        "string literal"
     )]
     #[test_case(
         b"!true",

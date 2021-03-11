@@ -41,7 +41,7 @@ pub fn repl() -> io::Result<()> {
 
         let _ = io::stdin().read_line(&mut buffer)?;
 
-        match buffer.as_str().trim() {
+        match buffer.trim() {
             QUIT => return Ok(()),
             CLEAR => env.borrow_mut().clear(),
             ENV => println!("{}", env.borrow()),

@@ -39,6 +39,7 @@ pub enum Expression {
     Name(String),
     Integer(i32),
     Boolean(bool),
+    String(String),
     Prefix {
         operator: Token,
         expr: Box<Expression>,
@@ -69,6 +70,7 @@ impl fmt::Display for Expression {
             Expression::Name(string) => write!(f, "{}", string),
             Expression::Integer(int) => write!(f, "{}", int),
             Expression::Boolean(boolean) => write!(f, "{}", boolean),
+            Expression::String(string) => write!(f, "\"{}\"", string),
             Expression::Prefix { operator, expr } => write!(f, "({}{})", operator, expr),
             Expression::Infix {
                 left,
@@ -126,6 +128,10 @@ pub fn integer(n: i32) -> Expression {
 
 pub fn boolean(b: bool) -> Expression {
     Expression::Boolean(b)
+}
+
+pub fn string<S: Into<String>>(s: S) -> Expression {
+    Expression::String(s.into())
 }
 
 pub fn prefix(operator: Token, expr: Expression) -> Expression {

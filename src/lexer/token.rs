@@ -8,6 +8,7 @@ pub enum Token {
     // Identifiers and Literals
     Ident(String),
     Int(String),
+    String(String),
 
     // Operators
     Assign,
@@ -46,6 +47,7 @@ impl fmt::Display for Token {
             Token::Illegal(string) => format!("ILLEGAL: {}", string),
             Token::Ident(string)   => string.clone(),
             Token::Int(string)     => string.clone(),
+            Token::String(string)  => format!("\"{}\"", string),
             Token::Eof       => "EOF".to_string(),
             Token::Assign    => "=".to_string(),
             Token::Plus      => "+".to_string(),

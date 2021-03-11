@@ -60,6 +60,7 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
             .ok_or(RuntimeError(format!("unknown identifier: `{}`", name))),
         Expression::Integer(n) => Ok(Object::Integer(n)),
         Expression::Boolean(b) => Ok(Object::Boolean(b)),
+        Expression::String(s) => Ok(Object::String(s)),
         Expression::Prefix { operator, expr } => eval_prefix_expr(env, operator, *expr),
         Expression::Infix {
             left,
@@ -138,6 +139,8 @@ fn eval_infix_expr(
         (Object::Boolean(b), Token::Eq , Object::Boolean(p)) => Object::Boolean(b == p),
         (Object::Boolean(b), Token::Neq, Object::Boolean(p)) => Object::Boolean(b != p),
 
+        (Object::String(s), Token::Plus, Object::String(t)) => Object::String(format!("{}{}", s, t)),
+
         (left, operator, right) => {
             return Err(RuntimeError(format!("type mismatch: `{} {} {}`", left, operator, right)));
         }
@@ -197,6 +200,7 @@ mod tests {
         } ;
         "function literal"
     )]
+    #[test_case(b"\"Hello World!\"", Object::String("Hello World!".to_string()) ; "string literal")]
     #[test_case(b"!true"  , Object::Boolean(false); "prefix bang 01")]
     #[test_case(b"!false" , Object::Boolean(true) ; "prefix bang 02")]
     #[test_case(b"!!true" , Object::Boolean(true) ; "prefix bang 03")]
@@ -227,6 +231,11 @@ mod tests {
     #[test_case(b"true == false"                  , Object::Boolean(false) ; "infix 22")]
     #[test_case(b"true != false"                  , Object::Boolean(true)  ; "infix 23")]
     #[test_case(b"false != true"                  , Object::Boolean(true)  ; "infix 24")]
+    #[test_case(
+        b"\"Hello\" + \" \" + \"World!\"",
+        Object::String("Hello World!".to_string()) ;
+        "infix 25"
+    )]
     #[test_case(b"if (true) { 10 }"             , Object::Integer(10) ; "if expr 01")]
     #[test_case(b"if (false) { 10 }"            , Object::Unit        ; "if expr 02")]
     #[test_case(b"if (1 < 2) { 10 }"            , Object::Integer(10) ; "if expr 03")]

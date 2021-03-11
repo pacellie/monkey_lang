@@ -36,7 +36,7 @@ impl Eq for Environment {}
 
 impl fmt::Display for Environment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.format(&mut HashSet::new()))
+        write!(f, "{}", self.format(&mut HashSet::new()).trim())
     }
 }
 
@@ -100,10 +100,7 @@ impl Environment {
             })
             .join(", ");
 
-        if output.len() != 0 {
-            output.push_str("\n");
-        }
-        output.push_str(&format!("{}: {}", self.id, pretty));
+        output.push_str(&format!("\n{}: {}", self.id, pretty));
 
         output
     }

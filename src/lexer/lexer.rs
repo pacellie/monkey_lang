@@ -43,7 +43,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn if_peek(&mut self, ch: u8, yes: Token, no: Token) -> Token {
+    fn read_if_peek(&mut self, ch: u8, yes: Token, no: Token) -> Token {
         if self.peek_char() == ch {
             self.read_char();
             yes
@@ -71,7 +71,7 @@ impl<'a> Lexer<'a> {
 
 fn lookup_ident(ident: &str) -> Token {
     #[rustfmt::skip]
-    let token =match ident {
+    let token = match ident {
         "fn"     => Token::Function,
         "let"    => Token::Let,
         "true"   => Token::True,
@@ -93,6 +93,10 @@ fn is_digit(ch: u8) -> bool {
     (ch as char).is_ascii_digit()
 }
 
+fn is_string_letter(ch: u8) -> bool {
+    ch != 0 && (ch as char) != '"'
+}
+
 impl<'a> Iterator for Lexer<'a> {
     type Item = Token;
 
@@ -100,10 +104,10 @@ impl<'a> Iterator for Lexer<'a> {
         self.skip_whitespace();
 
         let token = match self.ch {
-            b'=' => self.if_peek(b'=', Token::Eq, Token::Assign),
+            b'=' => self.read_if_peek(b'=', Token::Eq, Token::Assign),
             b'+' => Token::Plus,
             b'-' => Token::Minus,
-            b'!' => self.if_peek(b'=', Token::Neq, Token::Bang),
+            b'!' => self.read_if_peek(b'=', Token::Neq, Token::Bang),
             b'*' => Token::Asterisk,
             b'/' => Token::Slash,
             b'<' => Token::Lt,
@@ -114,6 +118,10 @@ impl<'a> Iterator for Lexer<'a> {
             b')' => Token::RParen,
             b'{' => Token::LBrace,
             b'}' => Token::RBrace,
+            b'"' => {
+                self.read_char();
+                Token::String(self.read_while(is_string_letter).to_string())
+            }
             0 => Token::Eof,
             _ => {
                 if is_letter(self.ch) {
@@ -233,6 +241,8 @@ mod tests {
             \n\
             10 == 10;\n\
             10 != 9;\n\
+            \"foobar\"\n\
+            \"foo bar\"\n\
             ";
 
         let expected = vec![
@@ -273,6 +283,8 @@ mod tests {
             Token::Neq,
             Token::Int("9".to_string()),
             Token::Semicolon,
+            Token::String("foobar".to_string()),
+            Token::String("foo bar".to_string()),
         ];
 
         let lexer = Lexer::new(input);
