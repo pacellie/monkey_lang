@@ -15,6 +15,7 @@ pub enum Builtin {
     Last,
     Rest,
     Push,
+    Puts,
 }
 
 impl fmt::Display for Builtin {
@@ -25,6 +26,7 @@ impl fmt::Display for Builtin {
             Builtin::Last => write!(f, "last"),
             Builtin::Rest => write!(f, "rest"),
             Builtin::Push => write!(f, "push"),
+            Builtin::Puts => write!(f, "puts"),
         }
     }
 }
@@ -37,6 +39,7 @@ impl Builtin {
             "last" => Some(Builtin::Last),
             "rest" => Some(Builtin::Rest),
             "push" => Some(Builtin::Push),
+            "puts" => Some(Builtin::Puts),
             _ => None,
         }
     }

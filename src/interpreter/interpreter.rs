@@ -276,6 +276,10 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
             },
             _ => Err(RuntimeError::wrong_number_of_args(2, args.len())),
         },
+        Builtin::Puts => {
+            args.iter().for_each(|obj| println!("{}", obj));
+            Ok(Object::Unit)
+        }
     }
 }
 
