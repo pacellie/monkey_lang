@@ -6,4 +6,4 @@ mod object;
 pub use environment::Environment;
 pub use error::{Result, RuntimeError};
 pub use interpreter::{eval, eval_program};
-pub use object::{BuiltinFunction, Object};
+pub use object::{Builtin, Object, Primitive};

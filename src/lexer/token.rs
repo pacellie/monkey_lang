@@ -24,6 +24,7 @@ pub enum Token {
 
     // Delimiters
     Comma,
+    Colon,
     Semicolon,
     LParen,
     RParen,
@@ -62,6 +63,7 @@ impl fmt::Display for Token {
             Token::Eq        => "==".to_string(),
             Token::Neq       => "!=".to_string(),
             Token::Comma     => ",".to_string(),
+            Token::Colon     => ":".to_string(),
             Token::Semicolon => ";".to_string(),
             Token::LParen    => "(".to_string(),
             Token::RParen    => ")".to_string(),

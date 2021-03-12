@@ -42,4 +42,11 @@ impl RuntimeError {
             index, upper_bound
         ))
     }
+
+    pub fn missing_index<S>(msg: S) -> RuntimeError
+    where
+        S: Into<String>,
+    {
+        RuntimeError(format!("missing index: `{}`", msg.into()))
+    }
 }

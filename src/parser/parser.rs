@@ -179,6 +179,7 @@ impl<'a> Parser<'a> {
             Token::Function => self.parse_function_expr()?,
             Token::LParen => self.parse_group_expr()?,
             Token::LBracket => self.parse_array_expr()?,
+            Token::LBrace => self.parse_map_expr()?,
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             Token::If => self.parse_if_expr()?,
             _ => {
@@ -262,6 +263,28 @@ impl<'a> Parser<'a> {
         self.advance_if(&Token::RBracket)?; // advance over `Token::RBracket`
 
         Ok(index(expr, idx))
+    }
+
+    // <{>(<expr><:><expr>(<,><expr><:><expr>)*)*<}>
+    fn parse_map_expr(&mut self) -> Result<Expression> {
+        self.advance(); // advance over `Token::LBrace`
+
+        let pairs = self.parse_many_sep_by(|parser| parser.parse_key_value_pair(), Token::Comma)?;
+
+        self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
+
+        Ok(map(pairs))
+    }
+
+    // <expr><:><expr>
+    fn parse_key_value_pair(&mut self) -> Result<(Expression, Expression)> {
+        let key = self.parse_expr(Precedence::Lowest)?;
+
+        self.advance_if(&Token::Colon)?; // advance over `Token::Colon`
+
+        let value = self.parse_expr(Precedence::Lowest)?;
+
+        Ok((key, value))
     }
 
     // <if><(><expr><)><{><block><}><else><{><block><}> | <if><(><expr><)><{><block><}>
@@ -410,22 +433,22 @@ mod tests {
     #[test_case(
         b"foobar",
         block(vec![expr_stmt(name("foobar"))]) ;
-        "literal 01"
+        "name literal"
     )]
     #[test_case(
         b"5",
         block(vec![expr_stmt(integer(5))]) ;
-        "literal 02"
+        "integer literal"
     )]
     #[test_case(
         b"true",
         block(vec![expr_stmt(boolean(true))]) ;
-        "literal 03"
+        "true literal"
     )]
     #[test_case(
         b"false",
         block(vec![expr_stmt(boolean(false))]) ;
-        "literal 04"
+        "false literal"
     )]
     #[test_case(
         b"fn() {}",
@@ -435,7 +458,7 @@ mod tests {
                 block(vec![])
             )
         )]) ;
-        "literal 05"
+        "fn literal 01"
     )]
     #[test_case(
         b"fn(x) {}",
@@ -447,7 +470,7 @@ mod tests {
                 block(vec![])
             )
         )]) ;
-        "literal 06"
+        "fn literal 02"
     )]
     #[test_case(
         b"fn(x, y) { x + y; }",
@@ -468,7 +491,7 @@ mod tests {
                 ])
             )
         )]) ;
-        "literal 07"
+        "fn literal 03"
     )]
     #[test_case(
         b"fn(x, y, z) {}",
@@ -482,7 +505,7 @@ mod tests {
                 block(vec![])
             )
         )]) ;
-        "literal 08"
+        "fn literal 04"
     )]
     #[test_case(
         b"\"hello world\"",
@@ -507,6 +530,56 @@ mod tests {
             ])
         )]) ;
         "array literal"
+    )]
+    #[test_case(
+        b"{}",
+        block(vec![expr_stmt(
+            map(vec![])
+        )]) ;
+        "map literal 01"
+    )]
+    #[test_case(
+        b"{\"one\": 1, \"two\": 2, \"three\": 3}",
+        block(vec![expr_stmt(
+            map(vec![
+                (string("one"), integer(1)),
+                (string("two"), integer(2)),
+                (string("three"), integer(3)),
+            ])
+        )]) ;
+        "map literal 02"
+    )]
+    #[test_case(
+        b"{true: 0 + 1, 1: 10 - 8, false: 15 / 5}",
+        block(vec![expr_stmt(
+            map(vec![
+                (
+                    boolean(true),
+                    infix(
+                        integer(0),
+                        Token::Plus,
+                        integer(1),
+                    )
+                ),
+                (
+                    integer(1),
+                    infix(
+                        integer(10),
+                        Token::Minus,
+                        integer(8),
+                    )
+                ),
+                (
+                    boolean(false),
+                    infix(
+                        integer(15),
+                        Token::Slash,
+                        integer(5),
+                    )
+                ),
+            ])
+        )]) ;
+        "map literal 03"
     )]
     #[test_case(
         b"!true",

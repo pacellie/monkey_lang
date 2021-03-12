@@ -41,6 +41,7 @@ pub enum Expression {
     Boolean(bool),
     String(String),
     Array(Vec<Expression>),
+    Map(Vec<(Expression, Expression)>),
     Prefix {
         operator: Token,
         expr: Box<Expression>,
@@ -77,6 +78,13 @@ impl fmt::Display for Expression {
             Expression::Boolean(boolean) => write!(f, "{}", boolean),
             Expression::String(string) => write!(f, "\"{}\"", string),
             Expression::Array(vec) => write!(f, "[{}]", vec.iter().join(", ")),
+            Expression::Map(vec) => write!(
+                f,
+                "{{{}}}",
+                vec.iter()
+                    .map(|(key, value)| format!("{}: {}", key, value))
+                    .join(", "),
+            ),
             Expression::Prefix { operator, expr } => write!(f, "({}{})", operator, expr),
             Expression::Infix {
                 left,
@@ -143,6 +151,10 @@ pub fn string<S: Into<String>>(s: S) -> Expression {
 
 pub fn array(exprs: Vec<Expression>) -> Expression {
     Expression::Array(exprs)
+}
+
+pub fn map(exprs: Vec<(Expression, Expression)>) -> Expression {
+    Expression::Map(exprs)
 }
 
 pub fn prefix(operator: Token, expr: Expression) -> Expression {

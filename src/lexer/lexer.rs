@@ -113,6 +113,7 @@ impl<'a> Iterator for Lexer<'a> {
             b'<' => Token::Lt,
             b'>' => Token::Gt,
             b',' => Token::Comma,
+            b':' => Token::Colon,
             b';' => Token::Semicolon,
             b'(' => Token::LParen,
             b')' => Token::RParen,
@@ -246,6 +247,7 @@ mod tests {
             \"foobar\"\n\
             \"foo bar\"\n\
             [1, 2]\n\
+            {\"foo\": \"bar\"}
             ";
 
         let expected = vec![
@@ -293,6 +295,11 @@ mod tests {
             Token::Comma,
             Token::Int("2".to_string()),
             Token::RBracket,
+            Token::LBrace,
+            Token::String("foo".to_string()),
+            Token::Colon,
+            Token::String("bar".to_string()),
+            Token::RBrace,
         ];
 
         let lexer = Lexer::new(input);
