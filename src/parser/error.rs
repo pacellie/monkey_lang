@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::{fmt, num};
 
 pub type Result<T> = std::result::Result<T, ParseError>;
@@ -10,6 +11,8 @@ impl fmt::Display for ParseError {
         write!(f, "{}", self.0)
     }
 }
+
+impl Error for ParseError {}
 
 impl From<num::ParseIntError> for ParseError {
     fn from(error: num::ParseIntError) -> Self {

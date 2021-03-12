@@ -1,4 +1,4 @@
-use crate::interpreter::{eval, Environment};
+use crate::interpreter::{eval_program, Environment};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -20,7 +20,7 @@ fn run(env: Rc<RefCell<Environment>>, input: &str) {
     match parser.parse() {
         Ok(ast) => {
             println!("{}", ast);
-            match eval(env, ast) {
+            match eval_program(env, ast) {
                 Ok(obj) => println!("{}", obj),
                 Err(err) => println!("Runtime Error: {}", err),
             }

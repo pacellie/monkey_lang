@@ -11,6 +11,7 @@ enum Precedence {
     Product,     // *
     Prefix,      // -, !
     Call,        // f()
+    Index,       // a[]
 }
 
 impl Precedence {
@@ -21,6 +22,7 @@ impl Precedence {
             Token::Plus | Token::Minus => Precedence::Sum,
             Token::Slash | Token::Asterisk => Precedence::Product,
             Token::LParen => Precedence::Call,
+            Token::LBracket => Precedence::Index,
             _ => Precedence::Lowest,
         }
     }
@@ -176,6 +178,7 @@ impl<'a> Parser<'a> {
             }
             Token::Function => self.parse_function_expr()?,
             Token::LParen => self.parse_group_expr()?,
+            Token::LBracket => self.parse_array_expr()?,
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             Token::If => self.parse_if_expr()?,
             _ => {
@@ -198,6 +201,7 @@ impl<'a> Parser<'a> {
                 | Token::Lt
                 | Token::Gt => self.parse_infix_expr(expr)?,
                 Token::LParen => self.parse_call_expr(expr)?,
+                Token::LBracket => self.parse_index_expr(expr)?,
                 _ => expr,
             }
         }
@@ -238,24 +242,52 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    // <[><expr>*<]>
+    fn parse_array_expr(&mut self) -> Result<Expression> {
+        self.advance(); // advance over `Token::LBracket`
+
+        let exprs = self.parse_exprs()?;
+
+        self.advance_if(&Token::RBracket)?; // advance over `Token::RBracket`
+
+        Ok(array(exprs))
+    }
+
+    // <[><expr><]>
+    fn parse_index_expr(&mut self, expr: Expression) -> Result<Expression> {
+        self.advance(); // advance over `Token::LBracket`
+
+        let idx = self.parse_expr(Precedence::Lowest)?;
+
+        self.advance_if(&Token::RBracket)?; // advance over `Token::RBracket`
+
+        Ok(index(expr, idx))
+    }
+
     // <if><(><expr><)><{><block><}><else><{><block><}> | <if><(><expr><)><{><block><}>
     fn parse_if_expr(&mut self) -> Result<Expression> {
         self.advance(); // advance over `Token::If`
 
-        self.advance_if(&Token::LParen)?; // advance over `Token::LParen`
-        let cond = self.parse_expr(Precedence::Lowest)?;
-        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
+        let cond = self.between(
+            &Token::LParen,
+            |parser| parser.parse_expr(Precedence::Lowest),
+            &Token::RParen,
+        )?;
 
-        self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
-        let yes = self.parse_block_stmt()?;
-        self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
+        let yes = self.between(
+            &Token::LBrace,
+            |parser| parser.parse_block_stmt(),
+            &Token::RBrace,
+        )?;
 
         if self.current == Token::Else {
             self.advance(); // advance over `Token::Else`
 
-            self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
-            let no = self.parse_block_stmt()?;
-            self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
+            let no = self.between(
+                &Token::LBrace,
+                |parser| parser.parse_block_stmt(),
+                &Token::RBrace,
+            )?;
 
             Ok(if_expr(cond, yes, Some(no)))
         } else {
@@ -267,34 +299,52 @@ impl<'a> Parser<'a> {
     fn parse_function_expr(&mut self) -> Result<Expression> {
         self.advance(); // advance over `Token::Function`
 
-        self.advance_if(&Token::LParen)?; // advance over `Token::LParen`
-        let params = self.parse_params()?;
-        self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
+        let params = self.between(
+            &Token::LParen,
+            |parser| parser.parse_names(),
+            &Token::RParen,
+        )?;
 
-        self.advance_if(&Token::LBrace)?; // advance over `Token::LBrace`
-        let body = self.parse_block_stmt()?;
-        self.advance_if(&Token::RBrace)?; // advance over `Token::RBrace`
+        let body = self.between(
+            &Token::LBrace,
+            |parser| parser.parse_block_stmt(),
+            &Token::RBrace,
+        )?;
 
         Ok(function(params, body))
     }
 
     // (<param>(<,><param>)*)*
-    fn parse_params(&mut self) -> Result<Vec<String>> {
+    fn parse_names(&mut self) -> Result<Vec<String>> {
         self.parse_many_sep_by(|parser| parser.parse_name(), Token::Comma)
     }
 
     // <(><args><)>
     fn parse_call_expr(&mut self, expr: Expression) -> Result<Expression> {
         self.advance(); // advance over `Token::LParen`
-        let args = self.parse_args()?;
+        let args = self.parse_exprs()?;
         self.advance_if(&Token::RParen)?; // advance over `Token::RParen`
 
         Ok(call(expr, args))
     }
 
     // (<expr>(<,><expr>)*)*
-    fn parse_args(&mut self) -> Result<Vec<Expression>> {
+    fn parse_exprs(&mut self) -> Result<Vec<Expression>> {
         self.parse_many_sep_by(|parser| parser.parse_expr(Precedence::Lowest), Token::Comma)
+    }
+
+    // <start><f><end>
+    fn between<A, F>(&mut self, start: &Token, f: F, end: &Token) -> Result<A>
+    where
+        F: Fn(&mut Parser) -> Result<A>,
+    {
+        self.advance_if(&start)?; // advance over `start`
+
+        let value = f(self)?;
+
+        self.advance_if(&end)?; // advance over `end`
+
+        Ok(value)
     }
 
     // <f>*
@@ -438,6 +488,25 @@ mod tests {
         b"\"hello world\"",
         block(vec![expr_stmt(string("hello world".to_string()))]) ;
         "string literal"
+    )]
+    #[test_case(
+        b"[1, 2 * 2, 3 + 3]",
+        block(vec![expr_stmt(
+            array(vec![
+                integer(1),
+                infix(
+                    integer(2),
+                    Token::Asterisk,
+                    integer(2),
+                ),
+                infix(
+                    integer(3),
+                    Token::Plus,
+                    integer(3),
+                ),
+            ])
+        )]) ;
+        "array literal"
     )]
     #[test_case(
         b"!true",
@@ -933,6 +1002,67 @@ mod tests {
         "precedence 25"
     )]
     #[test_case(
+        b"a * [1, 2, 3, 4][b * c] * d",
+        block(vec![expr_stmt(
+            infix(
+                infix(
+                    name("a"),
+                    Token::Asterisk,
+                    index(
+                        array(vec![
+                            integer(1),
+                            integer(2),
+                            integer(3),
+                            integer(4),
+                        ]),
+                        infix(
+                            name("b"),
+                            Token::Asterisk,
+                            name("c"),
+                        )
+                    )
+                ),
+                Token::Asterisk,
+                name("d"),
+            )
+        )]) ;
+        "precedence 26"
+    )]
+    #[test_case(
+        b"add(a * b[2], b[1], 2 * [1, 2][1])",
+        block(vec![expr_stmt(
+            call(
+                name("add"),
+                vec![
+                    infix(
+                        name("a"),
+                        Token::Asterisk,
+                        index(
+                            name("b"),
+                            integer(2),
+                        ),
+                    ),
+                    index(
+                        name("b"),
+                        integer(1),
+                    ),
+                    infix(
+                        integer(2),
+                        Token::Asterisk,
+                        index(
+                            array(vec![
+                                integer(1),
+                                integer(2),
+                            ]),
+                            integer(1),
+                        ),
+                    )
+                ]
+            )
+        )]) ;
+        "precedence 27"
+    )]
+    #[test_case(
         b"if (x < y) { x }",
         block(vec![
             expr_stmt(
@@ -1026,6 +1156,22 @@ mod tests {
             ),
         ]) ;
         "call expr 04"
+    )]
+    #[test_case(
+        b"myArray[1 + 1]",
+        block(vec![
+            expr_stmt(
+                index(
+                    name("myArray"),
+                    infix(
+                        integer(1),
+                        Token::Plus,
+                        integer(1),
+                    )
+                )
+            ),
+        ]) ;
+        "index expr 01"
     )]
     fn test(input: &[u8], expected: Program) {
         let lexer = Lexer::new(input);

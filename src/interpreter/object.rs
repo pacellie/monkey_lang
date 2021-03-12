@@ -10,12 +10,20 @@ use itertools::Itertools;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinFunction {
     Len,
+    First,
+    Last,
+    Rest,
+    Push,
 }
 
 impl fmt::Display for BuiltinFunction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BuiltinFunction::Len => write!(f, "len"),
+            BuiltinFunction::First => write!(f, "first"),
+            BuiltinFunction::Last => write!(f, "last"),
+            BuiltinFunction::Rest => write!(f, "rest"),
+            BuiltinFunction::Push => write!(f, "push"),
         }
     }
 }
@@ -24,6 +32,10 @@ impl BuiltinFunction {
     pub fn builtin_by_name(name: &str) -> Option<BuiltinFunction> {
         match name {
             "len" => Some(BuiltinFunction::Len),
+            "first" => Some(BuiltinFunction::First),
+            "last" => Some(BuiltinFunction::Last),
+            "rest" => Some(BuiltinFunction::Rest),
+            "push" => Some(BuiltinFunction::Push),
             _ => None,
         }
     }
@@ -35,6 +47,7 @@ pub enum Object {
     Integer(i32),
     Boolean(bool),
     String(String),
+    Array(Vec<Object>),
     Return(Box<Object>),
     Function {
         env: Rc<RefCell<Environment>>,
@@ -51,6 +64,7 @@ impl fmt::Display for Object {
             Object::Integer(n) => write!(f, "{}", n),
             Object::Boolean(b) => write!(f, "{}", b),
             Object::String(s) => write!(f, "\"{}\"", s),
+            Object::Array(objs) => write!(f, "[{}]", objs.iter().join(", ")),
             Object::Return(obj) => write!(f, "Return {}", obj),
             Object::Function { params, body, .. } => {
                 // Do not print `env` due to cyclic dependencies

@@ -5,5 +5,5 @@ mod object;
 
 pub use environment::Environment;
 pub use error::{Result, RuntimeError};
-pub use interpreter::eval;
+pub use interpreter::{eval, eval_program};
 pub use object::{BuiltinFunction, Object};

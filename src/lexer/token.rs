@@ -27,6 +27,8 @@ pub enum Token {
     Semicolon,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
 
@@ -63,6 +65,8 @@ impl fmt::Display for Token {
             Token::Semicolon => ";".to_string(),
             Token::LParen    => "(".to_string(),
             Token::RParen    => ")".to_string(),
+            Token::LBracket  => "[".to_string(),
+            Token::RBracket  => "]".to_string(),
             Token::LBrace    => "{".to_string(),
             Token::RBrace    => "}".to_string(),
             Token::Function  => "fn".to_string(),

@@ -1,0 +1,108 @@
+[0m2021.03.12 16:53:46 INFO  Started: Metals version 0.10.0 in workspace '/home/martin/Documents/Code/Rust/monkey_lang' for client vscode 1.54.2.[0m
+[0m2021.03.12 16:53:47 INFO  time: initialize in 1.01s[0m
+[0m2021.03.12 16:53:47 WARN  Build server is not auto-connectable.[0m
+[0m2021.03.12 16:53:47 WARN  no build tool detected in workspace '/home/martin/Documents/Code/Rust/monkey_lang'. The most common cause for this problem is that the editor was opened in the wrong working directory, for example if you use sbt then the workspace directory should contain build.sbt. [0m
+[0m2021.03.12 16:53:47 WARN  no build target for: /home/martin/Documents/Code/Scala/monkey-lang/example/src/main/scala/example/Example.scala[0m
+[0m2021.03.12 16:53:50 INFO  no build target: using presentation compiler with only scala-library: 2.12.13[0m
+package example
+
+import monkey.parser.Parser
+import monkey.interpreter.Interpreter.eval
+
+private object run {
+  def apply(input: String): Unit =
+    Parser(input)
+      .parse()
+      .fold(
+        println(_),
+        program =>
+          eval(program).fold(
+            println(_),
+            println(_)
+          )
+      )
+}
+
+object factorial extends App {
+  val input =
+    s"""let factorial = fn(x) {
+       |  if (x < 1) {
+       |    1
+       |  } else {
+       |    x * factorial(x - 1)
+       |  }
+       |};
+       |
+       |factorial(${args(0)})""".stripMargin
+
+  run(input)
+}
+
+object fibonacci extends App {
+  val input =
+    s"""let fibonacci = fn(x) {
+       |  if (x < 1) {
+       |    0
+       |  } else {
+       |    if (x < 2) {
+       |      1
+       |    } else {
+       |      fibonacci(x - 2) + fibonacci(x - 1)
+       |    }
+       |  }
+       |};
+       |
+       |fibonacci(${args(0)})""".stripMargin
+
+  run(input)
+}
+
+object map extends App {
+  val input =
+    s"""let map = fn(array, f) {
+       |  let go = fn(array, acc) {
+       |    if (len(array) == 0) {
+       |      acc
+       |    } else {
+       |      go(tail(array), push(acc, f(head(array))))
+       |    }
+       |  };
+       |  go(array, [])
+       |};
+       |
+       |let double = fn(x) { x * 2 };
+       |
+       |map([1, 2, 3, 4], double)""".stripMargin
+
+  run(input)
+}
+
+object fold extends App {
+  val input =
+    s"""let fold = fn(array, init, f) {
+       |  let go = fn(array, acc) {
+       |    if (len(array) == 0) {
+       |      acc
+       |    } else {
+       |      go(tail(array), f(acc, head(array)))
+       |    }
+       |  };
+       |  go(array, init)
+       |};
+       |
+       |let sum = fn(array) {
+       |  fold(array, 0, fn(result, elem) { result + elem })
+       |};
+       |
+       |sum([1, 2, 3, 4, 5])""".stripMargin
+
+  run(input)
+}
+
+[0m2021.03.12 16:53:51 INFO  time: code lens generation in 3.76s[0m
+Mar 12, 2021 4:54:46 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 18
+Mar 12, 2021 5:15:02 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 30
+Mar 12, 2021 5:21:36 PM org.eclipse.lsp4j.jsonrpc.RemoteEndpoint handleCancellation
+WARNING: Unmatched cancel notification for request id 49

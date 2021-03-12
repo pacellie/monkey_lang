@@ -40,6 +40,7 @@ pub enum Expression {
     Integer(i32),
     Boolean(bool),
     String(String),
+    Array(Vec<Expression>),
     Prefix {
         operator: Token,
         expr: Box<Expression>,
@@ -62,6 +63,10 @@ pub enum Expression {
         expr: Box<Expression>,
         args: Vec<Expression>,
     },
+    Index {
+        expr: Box<Expression>,
+        index: Box<Expression>,
+    },
 }
 
 impl fmt::Display for Expression {
@@ -71,6 +76,7 @@ impl fmt::Display for Expression {
             Expression::Integer(int) => write!(f, "{}", int),
             Expression::Boolean(boolean) => write!(f, "{}", boolean),
             Expression::String(string) => write!(f, "\"{}\"", string),
+            Expression::Array(vec) => write!(f, "[{}]", vec.iter().join(", ")),
             Expression::Prefix { operator, expr } => write!(f, "({}{})", operator, expr),
             Expression::Infix {
                 left,
@@ -89,6 +95,7 @@ impl fmt::Display for Expression {
             Expression::Call { expr, args } => {
                 write!(f, "{}({})", expr, args.iter().join(", "))
             }
+            Expression::Index { expr, index } => write!(f, "({}[{}])", expr, index),
         }
     }
 }
@@ -134,6 +141,10 @@ pub fn string<S: Into<String>>(s: S) -> Expression {
     Expression::String(s.into())
 }
 
+pub fn array(exprs: Vec<Expression>) -> Expression {
+    Expression::Array(exprs)
+}
+
 pub fn prefix(operator: Token, expr: Expression) -> Expression {
     Expression::Prefix {
         operator,
@@ -168,5 +179,12 @@ pub fn call(expr: Expression, args: Vec<Expression>) -> Expression {
     Expression::Call {
         expr: Box::new(expr),
         args,
+    }
+}
+
+pub fn index(expr: Expression, index: Expression) -> Expression {
+    Expression::Index {
+        expr: Box::new(expr),
+        index: Box::new(index),
     }
 }
