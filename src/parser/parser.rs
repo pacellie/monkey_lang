@@ -80,8 +80,23 @@ impl<'a> Parser<'a> {
     }
 
     // <stmt>*
-    pub fn parse(&mut self) -> Result<Program> {
-        self.parse_block_stmt()
+    pub fn parse(&mut self) -> (Program, Vec<ParseError>) {
+        let mut stmts = vec![];
+        let mut errors = vec![];
+
+        while self.current != Token::Eof {
+            self.parse_stmt().map_or_else(
+                |err| {
+                    self.advance();
+                    errors.push(err);
+                },
+                |stmt| {
+                    stmts.push(stmt);
+                },
+            );
+        }
+
+        (block(stmts), errors)
     }
 
     // <let_stmt> | <return_stmt> | <stmt> | <expr>
@@ -1249,8 +1264,8 @@ mod tests {
     fn test(input: &[u8], expected: Program) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let output = parser.parse().unwrap();
+        let (ast, _) = parser.parse();
 
-        assert_eq!(output, expected)
+        assert_eq!(ast, expected)
     }
 }

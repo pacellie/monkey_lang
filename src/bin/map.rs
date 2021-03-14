@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let lexer = Lexer::new(map.as_bytes());
     let mut parser = Parser::new(lexer);
-    let ast = parser.parse()?;
+    let (ast, _) = parser.parse();
     let obj = eval(ast)?;
 
     println!("{}", obj);

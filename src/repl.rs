@@ -6,6 +6,8 @@ use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
 
+use itertools::Itertools;
+
 const PROMPT: &str = ">> ";
 const QUIT: &str = "quit";
 const CLEAR: &str = "clear";
@@ -17,15 +19,21 @@ const CMDS: &str = "\tquit  := quit the repl\n\
 fn run(env: Rc<RefCell<Environment>>, input: &str) {
     let lexer = Lexer::new(input.as_bytes());
     let mut parser = Parser::new(lexer);
-    match parser.parse() {
-        Ok(ast) => {
-            println!("{}", ast);
-            match eval_program(env, ast) {
-                Ok(obj) => println!("{}", obj),
-                Err(err) => println!("Runtime Error: {}", err),
-            }
+    let (ast, errors) = parser.parse();
+    if errors.len() != 0 {
+        println!(
+            "{}",
+            errors
+                .iter()
+                .map(|error| format!("Parser Error: {}", error))
+                .join("\n")
+        );
+    } else {
+        println!("{}", ast);
+        match eval_program(env, ast) {
+            Ok(obj) => println!("{}", obj),
+            Err(err) => println!("Runtime Error: {}", err),
         }
-        Err(err) => println!("Parser Error: {}", err),
     }
 }
 

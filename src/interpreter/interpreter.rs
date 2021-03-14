@@ -458,7 +458,7 @@ mod tests {
     fn test(input: &[u8], expected: Object) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
+        let (ast, _) = parser.parse();
         let object = eval(ast).unwrap();
 
         assert_eq!(object, expected)
@@ -488,7 +488,7 @@ mod tests {
 
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
+        let (ast, _) = parser.parse();
         let object = eval(ast).unwrap();
 
         assert_eq!(object, expected)
@@ -511,7 +511,7 @@ mod tests {
     fn test_error(input: &[u8], expected: RuntimeError) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let ast = parser.parse().unwrap();
+        let (ast, _) = parser.parse();
         let error = eval(ast).unwrap_err();
 
         assert_eq!(error, expected)
