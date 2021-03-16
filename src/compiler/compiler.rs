@@ -82,7 +82,7 @@ mod tests {
 
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
         let mut compiler = Compiler::new();
         let byte_code = compiler.compile(&ast);
 

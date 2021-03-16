@@ -16,24 +16,20 @@ const CMDS: &str = "\tquit  := quit the repl\n\
                     \tclear := clear the environment\n\
                     \tenv   := print the environment\n";
 
-fn run(env: Rc<RefCell<Environment>>, input: &str) {
+fn interpret(env: Rc<RefCell<Environment>>, input: &str) {
     let lexer = Lexer::new(input.as_bytes());
     let mut parser = Parser::new(lexer);
-    let (ast, errors) = parser.parse();
-    if errors.len() != 0 {
-        println!(
+
+    let result = parser
+        .parse()
+        .and_then(|ast| eval_program(env, ast).map_err(|error| vec![error]));
+
+    match result {
+        Ok(obj) => println!("{}", obj),
+        Err(errors) => println!(
             "{}",
-            errors
-                .iter()
-                .map(|error| format!("Parser Error: {}", error))
-                .join("\n")
-        );
-    } else {
-        println!("{}", ast);
-        match eval_program(env, ast) {
-            Ok(obj) => println!("{}", obj),
-            Err(err) => println!("Runtime Error: {}", err),
-        }
+            errors.iter().map(|error| format!("{}", error)).join(", ")
+        ),
     }
 }
 
@@ -53,7 +49,7 @@ pub fn repl() -> io::Result<()> {
             QUIT => return Ok(()),
             CLEAR => env.borrow_mut().clear(),
             ENV => println!("{}", env.borrow()),
-            line => run(env.clone(), line),
+            line => interpret(env.clone(), line),
         }
 
         buffer.clear();

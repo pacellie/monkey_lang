@@ -1,6 +1,6 @@
+use crate::error::{MonkeyError, Result};
 use crate::lexer::{Lexer, Token};
 use crate::parser::ast::*;
-use crate::parser::error::{ParseError, Result};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Precedence {
@@ -72,15 +72,15 @@ impl<'a> Parser<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(ParseError(format!(
-                "Expected `{}`, got `{}` instead.",
-                token, self.current
-            )))
+            Err(MonkeyError::parser_error(
+                token.to_string(),
+                self.current.to_string(),
+            ))
         }
     }
 
     // <stmt>*
-    pub fn parse(&mut self) -> (Program, Vec<ParseError>) {
+    pub fn parse(&mut self) -> std::result::Result<Program, Vec<MonkeyError>> {
         let mut stmts = vec![];
         let mut errors = vec![];
 
@@ -96,7 +96,11 @@ impl<'a> Parser<'a> {
             );
         }
 
-        (block(stmts), errors)
+        if errors.len() == 0 {
+            Ok(block(stmts))
+        } else {
+            Err(errors)
+        }
     }
 
     // <let_stmt> | <return_stmt> | <stmt> | <expr>
@@ -160,10 +164,7 @@ impl<'a> Parser<'a> {
                 Ok(name)
             }
             _ => {
-                return Err(ParseError(format!(
-                    "Expected `name`, got `{}` instead.",
-                    self.current
-                )))
+                return Err(MonkeyError::parser_error("name", self.current.to_string()));
             }
         }
     }
@@ -198,10 +199,10 @@ impl<'a> Parser<'a> {
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             Token::If => self.parse_if_expr()?,
             _ => {
-                return Err(ParseError(format!(
-                    "`{}` is not a valid start of an expression.",
-                    self.current
-                )));
+                return Err(MonkeyError::parser_error(
+                    "start of an expression",
+                    self.current.to_string(),
+                ));
             }
         };
 
@@ -1264,7 +1265,7 @@ mod tests {
     fn test(input: &[u8], expected: Program) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
 
         assert_eq!(ast, expected)
     }

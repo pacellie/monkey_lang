@@ -1,6 +1,6 @@
+use crate::error::{MonkeyError, Result};
 use crate::interpreter::Environment;
 use crate::interpreter::{Builtin, Object, Primitive};
-use crate::interpreter::{Result, RuntimeError};
 use crate::lexer::Token;
 use crate::parser::ast::*;
 
@@ -86,7 +86,7 @@ fn eval_name(env: Env, name: String) -> Result<Object> {
     env.borrow()
         .get(&name)
         .or_else(|| Builtin::builtin_by_name(&name).map(|builtin| Object::Builtin(builtin)))
-        .ok_or(RuntimeError::unknown_name(format!("{}", name)))
+        .ok_or(MonkeyError::unknown_name(format!("{}", name)))
 }
 
 fn eval_prefix_expr(env: Env, operator: Token, expr: Expression) -> Result<Object> {
@@ -94,7 +94,7 @@ fn eval_prefix_expr(env: Env, operator: Token, expr: Expression) -> Result<Objec
     match (operator, object) {
         (Token::Bang, Object::Primitive(Primitive::Boolean(b))) => Ok(Object::boolean(!b)),
         (Token::Minus, Object::Primitive(Primitive::Integer(n))) => Ok(Object::integer(-n)),
-        (operator, object) => Err(RuntimeError::type_mismatch(format!(
+        (operator, object) => Err(MonkeyError::type_mismatch(format!(
             "{}{}",
             operator, object
         ))),
@@ -113,7 +113,7 @@ fn eval_infix_expr(
     let (left, right) = match (left, right) {
         (Object::Primitive(l), Object::Primitive(r)) => (l, r),
         (left, right) => {
-            return Err(RuntimeError::type_mismatch(format!(
+            return Err(MonkeyError::type_mismatch(format!(
                 "{} {} {}",
                 left, operator, right
             )));
@@ -137,7 +137,7 @@ fn eval_infix_expr(
         (Primitive::String(s), Token::Plus, Primitive::String(t)) => Object::string(format!("{}{}", s, t)),
 
         (left, operator, right) => {
-            return Err(RuntimeError::type_mismatch(format!("{} {} {}", left, operator, right)));
+            return Err(MonkeyError::type_mismatch(format!("{} {} {}", left, operator, right)));
         }
     };
 
@@ -157,10 +157,7 @@ fn eval_if_expr(env: Env, cond: Expression, yes: Block, no: Option<Block>) -> Re
             }
         }
     } else {
-        Err(RuntimeError::type_mismatch(format!(
-            "if ({}) {{...}}",
-            cond
-        )))
+        Err(MonkeyError::type_mismatch(format!("if ({}) {{...}}", cond)))
     }
 }
 
@@ -171,7 +168,7 @@ fn eval_call_expr(env: Env, expr: Expression, args: Vec<Expression>) -> Result<O
     match obj {
         Object::Function { env, params, body } => eval_function_call_expr(env, params, body, args),
         Object::Builtin(builtin) => eval_builtin_call_expr(builtin, args),
-        _ => Err(RuntimeError::type_mismatch(format!(
+        _ => Err(MonkeyError::type_mismatch(format!(
             "{}({})",
             obj,
             args.iter().join(", ")
@@ -194,7 +191,7 @@ fn eval_function_call_expr(
     args: Vec<Object>,
 ) -> Result<Object> {
     if params.len() != args.len() {
-        return Err(RuntimeError::wrong_number_of_args(params.len(), args.len()));
+        return Err(MonkeyError::wrong_number_of_args(params.len(), args.len()));
     }
 
     let mut env = Environment::new(env);
@@ -219,9 +216,9 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
             [obj] => match obj {
                 Object::Primitive(Primitive::String(s)) => Ok(Object::integer(s.len() as i32)),
                 Object::Array(vec) => Ok(Object::integer(vec.len() as i32)),
-                _ => Err(RuntimeError::type_mismatch(format!("len({})", obj))),
+                _ => Err(MonkeyError::type_mismatch(format!("len({})", obj))),
             },
-            _ => Err(RuntimeError::wrong_number_of_args(1, args.len())),
+            _ => Err(MonkeyError::wrong_number_of_args(1, args.len())),
         },
         Builtin::First => match &args[..] {
             [obj] => match obj {
@@ -229,12 +226,12 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[0].clone())
                     } else {
-                        Err(RuntimeError("first([])".to_string()))
+                        Err(MonkeyError::RuntimeError("first([])".to_string()))
                     }
                 }
-                _ => Err(RuntimeError::type_mismatch(format!("first({})", obj))),
+                _ => Err(MonkeyError::type_mismatch(format!("first({})", obj))),
             },
-            _ => Err(RuntimeError::wrong_number_of_args(1, args.len())),
+            _ => Err(MonkeyError::wrong_number_of_args(1, args.len())),
         },
         Builtin::Last => match &args[..] {
             [obj] => match obj {
@@ -242,12 +239,12 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[vec.len() - 1].clone())
                     } else {
-                        Err(RuntimeError("last([])".to_string()))
+                        Err(MonkeyError::RuntimeError("last([])".to_string()))
                     }
                 }
-                _ => Err(RuntimeError::type_mismatch(format!("last({})", obj))),
+                _ => Err(MonkeyError::type_mismatch(format!("last({})", obj))),
             },
-            _ => Err(RuntimeError::wrong_number_of_args(1, args.len())),
+            _ => Err(MonkeyError::wrong_number_of_args(1, args.len())),
         },
         Builtin::Rest => match &args[..] {
             [obj] => match obj {
@@ -255,12 +252,12 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(Object::Array(vec[1..].to_vec()))
                     } else {
-                        Err(RuntimeError("rest([])".to_string()))
+                        Err(MonkeyError::RuntimeError("rest([])".to_string()))
                     }
                 }
-                _ => Err(RuntimeError::type_mismatch(format!("rest({})", obj))),
+                _ => Err(MonkeyError::type_mismatch(format!("rest({})", obj))),
             },
-            _ => Err(RuntimeError::wrong_number_of_args(1, args.len())),
+            _ => Err(MonkeyError::wrong_number_of_args(1, args.len())),
         },
         Builtin::Push => match &args[..] {
             [array, obj] => match array {
@@ -269,12 +266,12 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     vec.push(obj.clone());
                     Ok(Object::Array(vec))
                 }
-                _ => Err(RuntimeError::type_mismatch(format!(
+                _ => Err(MonkeyError::type_mismatch(format!(
                     "push({}, {})",
                     array, obj
                 ))),
             },
-            _ => Err(RuntimeError::wrong_number_of_args(2, args.len())),
+            _ => Err(MonkeyError::wrong_number_of_args(2, args.len())),
         },
         Builtin::Puts => {
             args.iter().for_each(|obj| println!("{}", obj));
@@ -292,14 +289,14 @@ fn eval_index_expr(env: Env, expr: Expression, index: Expression) -> Result<Obje
             if 0 <= i && (i as usize) < vec.len() {
                 Ok(vec[i as usize].clone())
             } else {
-                Err(RuntimeError::index_out_of_bounds(i, vec.len() - 1))
+                Err(MonkeyError::index_out_of_bounds(i, vec.len() - 1))
             }
         }
         (Object::Map(map), Object::Primitive(key)) => map
             .get(&key)
             .map(|value| value.clone())
-            .ok_or(RuntimeError::missing_index(format!("{}", key))),
-        (obj, index) => Err(RuntimeError::type_mismatch(format!("{}[{}]", obj, index))),
+            .ok_or(MonkeyError::missing_index(format!("{}", key))),
+        (obj, index) => Err(MonkeyError::type_mismatch(format!("{}[{}]", obj, index))),
     }
 }
 
@@ -310,7 +307,7 @@ fn eval_map_expr(env: Env, pairs: Vec<(Expression, Expression)>) -> Result<Objec
                 let value = eval_expr(env, value)?;
                 Ok((key, value))
             }
-            obj => Err(RuntimeError::type_mismatch(format!("{{{}: (...)}}", obj))),
+            obj => Err(MonkeyError::type_mismatch(format!("{{{}: (...)}}", obj))),
         }
     })?;
 
@@ -458,7 +455,7 @@ mod tests {
     fn test(input: &[u8], expected: Object) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
         let object = eval(ast).unwrap();
 
         assert_eq!(object, expected)
@@ -488,30 +485,30 @@ mod tests {
 
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
         let object = eval(ast).unwrap();
 
         assert_eq!(object, expected)
     }
 
-    #[test_case(b"5 + true"              , RuntimeError::type_mismatch("5 + true")        ; "error 01")]
-    #[test_case(b"5 + true; 5;"          , RuntimeError::type_mismatch("5 + true")        ; "error 02")]
-    #[test_case(b"-true"                 , RuntimeError::type_mismatch("-true")           ; "error 03")]
-    #[test_case(b"!5"                    , RuntimeError::type_mismatch("!5")              ; "error 04")]
-    #[test_case(b"5; true + false; 5"    , RuntimeError::type_mismatch("true + false")    ; "error 05")]
-    #[test_case(b"if (1) { 10 }"         , RuntimeError::type_mismatch("if (1) {...}")    ; "error 06")]
-    #[test_case(b"foobar"                , RuntimeError::unknown_name("foobar")           ; "error 07")]
-    #[test_case(b"len(1)"                , RuntimeError::type_mismatch("len(1)")          ; "error 08")]
-    #[test_case(b"len(\"one\", \"two\")" , RuntimeError::wrong_number_of_args(1, 2)       ; "error 09")]
-    #[test_case(b"[1, 2, 3][3]"          , RuntimeError::index_out_of_bounds(3, 2)        ; "error 10")]
-    #[test_case(b"[1, 2, 3][-1]"         , RuntimeError::index_out_of_bounds(-1, 2)       ; "error 11")]
-    #[test_case(b"{\"foo\": 5}[\"bar\"]" , RuntimeError::missing_index("\"bar\"")         ; "error 12")]
-    #[test_case(b"{}[\"foo\"]"           , RuntimeError::missing_index("\"foo\"")         ; "error 13")]
-    #[test_case(b"{}[fn(x) { x }]"       , RuntimeError::type_mismatch("{}[fn(x) { x }]") ; "error 14")]
-    fn test_error(input: &[u8], expected: RuntimeError) {
+    #[test_case(b"5 + true"              , MonkeyError::type_mismatch("5 + true")        ; "error 01")]
+    #[test_case(b"5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")        ; "error 02")]
+    #[test_case(b"-true"                 , MonkeyError::type_mismatch("-true")           ; "error 03")]
+    #[test_case(b"!5"                    , MonkeyError::type_mismatch("!5")              ; "error 04")]
+    #[test_case(b"5; true + false; 5"    , MonkeyError::type_mismatch("true + false")    ; "error 05")]
+    #[test_case(b"if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")    ; "error 06")]
+    #[test_case(b"foobar"                , MonkeyError::unknown_name("foobar")           ; "error 07")]
+    #[test_case(b"len(1)"                , MonkeyError::type_mismatch("len(1)")          ; "error 08")]
+    #[test_case(b"len(\"one\", \"two\")" , MonkeyError::wrong_number_of_args(1, 2)       ; "error 09")]
+    #[test_case(b"[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)        ; "error 10")]
+    #[test_case(b"[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)       ; "error 11")]
+    #[test_case(b"{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")         ; "error 12")]
+    #[test_case(b"{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")         ; "error 13")]
+    #[test_case(b"{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[fn(x) { x }]") ; "error 14")]
+    fn test_error(input: &[u8], expected: MonkeyError) {
         let lexer = Lexer::new(input);
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
         let error = eval(ast).unwrap_err();
 
         assert_eq!(error, expected)

@@ -1,5 +1,6 @@
 use crate::compiler::{Binary, ByteCode, Op, Reference};
-use crate::vm::{Object, Result, RuntimeError};
+use crate::error::{MonkeyError, Result};
+use crate::vm::Object;
 
 const STACK_SIZE: usize = 2048;
 
@@ -28,7 +29,9 @@ impl VirtualMachine {
                 self.execute(op)?;
                 pc += i;
             } else {
-                return Err(RuntimeError("invalid bytecode format.".to_string()));
+                return Err(MonkeyError::RuntimeError(
+                    "invalid bytecode format.".to_string(),
+                ));
             }
         }
 
@@ -63,7 +66,7 @@ impl VirtualMachine {
 
     fn dereference(&self, reference: Reference) -> Result<&Object> {
         if reference as usize >= self.constants.len() {
-            Err(RuntimeError("invalid heap access".to_string()))
+            Err(MonkeyError::RuntimeError("invalid heap access".to_string()))
         } else {
             Ok(&self.constants[reference as usize])
         }
@@ -71,7 +74,7 @@ impl VirtualMachine {
 
     fn push(&mut self, reference: Reference) -> Result<()> {
         if self.sp >= STACK_SIZE {
-            Err(RuntimeError("stack Overflow".to_string()))
+            Err(MonkeyError::RuntimeError("stack overflow".to_string()))
         } else {
             self.stack[self.sp] = reference;
             self.sp += 1;
@@ -81,7 +84,7 @@ impl VirtualMachine {
 
     fn pop(&mut self) -> Result<Reference> {
         if self.sp == 0 {
-            Err(RuntimeError("stack Underflow".to_string()))
+            Err(MonkeyError::RuntimeError("stack underflow".to_string()))
         } else {
             self.sp -= 1;
             Ok(self.stack[self.sp])
@@ -90,7 +93,7 @@ impl VirtualMachine {
 
     pub fn top(&self) -> Result<&Object> {
         if self.sp == 0 {
-            Err(RuntimeError("stack Underflow".to_string()))
+            Err(MonkeyError::RuntimeError("stack underflow".to_string()))
         } else {
             self.dereference(self.stack[self.sp])
         }
@@ -113,7 +116,7 @@ mod tests {
     fn test(input: &str, top: Object) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);
-        let (ast, _) = parser.parse();
+        let ast = parser.parse().unwrap();
         let mut compiler = Compiler::new();
         let byte_code = compiler.compile(&ast);
         let mut vm = VirtualMachine::new(byte_code);
