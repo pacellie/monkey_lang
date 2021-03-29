@@ -2,6 +2,7 @@ use std::fmt;
 
 pub type Reference = u16;
 pub type Address = u16;
+pub type Binding = u16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -32,6 +33,10 @@ pub enum Op {
     // Jumps
     JumpIfNot(Address),
     Jump(Address),
+
+    // Bindings
+    GetGlobal(Binding),
+    SetGlobal(Binding),
 }
 
 #[rustfmt::skip]
@@ -58,6 +63,9 @@ impl Op {
 
     pub const JUMPIFNOT: u8 = 15;
     pub const JUMP     : u8 = 16;
+
+    pub const GETGLOBAL: u8 = 17;
+    pub const SETGLOBAL: u8 = 18;
 }
 
 impl fmt::Display for Op {
@@ -80,6 +88,8 @@ impl fmt::Display for Op {
             Op::Bang => write!(f, "!"),
             Op::JumpIfNot(address) => write!(f, "JumpIfNot {}", address),
             Op::Jump(address) => write!(f, "Jump {}", address),
+            Op::GetGlobal(binding) => write!(f, "GetGlobal {}", binding),
+            Op::SetGlobal(binding) => write!(f, "SetGlobal {}", binding),
         }
     }
 }

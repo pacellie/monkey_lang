@@ -1,6 +1,8 @@
 use crate::compiler::{Op, Reference};
+use crate::error::{MonkeyError, Result};
 use crate::lexer::Token;
 use crate::parser::ast::*;
+use crate::symbol::*;
 use crate::vm::Object;
 
 #[derive(Debug, Clone)]
@@ -11,7 +13,8 @@ pub struct ByteCode {
 
 pub struct Compiler {
     bytes: Vec<u8>,
-    constants: Vec<Object>,
+    pub constants: Vec<Object>,
+    pub symbol_table: SymbolTable,
 }
 
 impl Compiler {
@@ -19,35 +22,58 @@ impl Compiler {
         Compiler {
             bytes: vec![],
             constants: vec![Object::Unit, Object::False, Object::True],
+            symbol_table: SymbolTable::new(),
         }
     }
 
-    pub fn compile(&mut self, ast: &Program) -> ByteCode {
-        self.compile_block_stmt(ast);
+    pub fn compile(&mut self, ast: &Program) -> Result<ByteCode> {
+        self.compile_block_stmt(ast)?;
 
-        ByteCode {
+        Ok(ByteCode {
             bytes: self.bytes.clone(),
             constants: self.constants.clone(),
+        })
+    }
+
+    fn compile_block_stmt(&mut self, block: &Block) -> Result<()> {
+        for stmt in &block.0 {
+            self.compile_stmt(stmt)?;
         }
+
+        Ok(())
     }
 
-    fn compile_block_stmt(&mut self, block: &Block) {
-        block.0.iter().for_each(|stmt| self.compile_stmt(stmt));
-    }
-
-    fn compile_stmt(&mut self, stmt: &Statement) {
+    fn compile_stmt(&mut self, stmt: &Statement) -> Result<()> {
         match stmt {
-            Statement::Expr(expr) => self.compile_expr(expr),
+            Statement::Let { name, expr } => {
+                self.compile_expr(expr)?;
+                let index = self.symbol_table.define(name).index;
+                self.emit(Op::SetGlobal(index));
+            }
             Statement::Stmt(expr) => {
-                self.compile_expr(expr);
+                self.compile_expr(expr)?;
                 self.emit(Op::Pop);
             }
+            Statement::Expr(expr) => self.compile_expr(expr)?,
             _ => panic!(),
         }
+
+        Ok(())
     }
 
-    fn compile_expr(&mut self, expr: &Expression) {
+    fn compile_expr(&mut self, expr: &Expression) -> Result<()> {
         match expr {
+            Expression::Name(name) => {
+                let index = self
+                    .symbol_table
+                    .resolve(name)
+                    .map_or(Err(MonkeyError::undefined_variable(name)), |symbol| {
+                        Ok(symbol)
+                    })?
+                    .index;
+
+                self.emit(Op::GetGlobal(index));
+            }
             Expression::Integer(i) => {
                 let reference = self.allocate(Object::Integer(*i));
                 self.emit(Op::Constant(reference));
@@ -59,7 +85,7 @@ impl Compiler {
                 self.emit(Op::True);
             }
             Expression::Prefix { operator, expr } => {
-                self.compile_expr(expr);
+                self.compile_expr(expr)?;
                 match operator {
                     Token::Minus => self.emit(Op::Minus),
                     Token::Bang => self.emit(Op::Bang),
@@ -71,8 +97,8 @@ impl Compiler {
                 operator,
                 right,
             } => {
-                self.compile_expr(left);
-                self.compile_expr(right);
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
                 match operator {
                     Token::Plus => self.emit(Op::Add),
                     Token::Minus => self.emit(Op::Sub),
@@ -86,15 +112,15 @@ impl Compiler {
                 };
             }
             Expression::If { cond, yes, no } => {
-                self.compile_expr(cond);
+                self.compile_expr(cond)?;
                 let jump_if_not = self.emit(Op::JumpIfNot(65535));
-                self.compile_block_stmt(yes);
+                self.compile_block_stmt(yes)?;
                 let jump = self.emit(Op::Jump(65535));
                 self.patch(jump_if_not);
 
                 match no {
                     Some(no) => {
-                        self.compile_block_stmt(no);
+                        self.compile_block_stmt(no)?;
                     }
                     None => {
                         self.emit(Op::Unit);
@@ -105,6 +131,8 @@ impl Compiler {
             }
             _ => panic!(),
         }
+
+        Ok(())
     }
 
     fn encode(&mut self, op: Op) {
@@ -162,6 +190,14 @@ impl Compiler {
             Op::Jump(address) => {
                 self.bytes.push(Op::JUMP);
                 self.bytes.extend_from_slice(&address.to_be_bytes());
+            }
+            Op::GetGlobal(binding) => {
+                self.bytes.push(Op::GETGLOBAL);
+                self.bytes.extend_from_slice(&binding.to_be_bytes());
+            }
+            Op::SetGlobal(binding) => {
+                self.bytes.push(Op::SETGLOBAL);
+                self.bytes.extend_from_slice(&binding.to_be_bytes());
             }
         }
     }
@@ -233,6 +269,16 @@ mod tests {
                     Op::JUMP => {
                         let address = u16::from_be_bytes([self[i + 1], self[i + 2]]);
                         ops.push(Op::Jump(address));
+                        i += 2;
+                    }
+                    Op::GETGLOBAL => {
+                        let binding = u16::from_be_bytes([self[i + 1], self[i + 2]]);
+                        ops.push(Op::GetGlobal(binding));
+                        i += 2;
+                    }
+                    Op::SETGLOBAL => {
+                        let binding = u16::from_be_bytes([self[i + 1], self[i + 2]]);
+                        ops.push(Op::SetGlobal(binding));
                         i += 2;
                     }
                     _ => {
@@ -355,12 +401,30 @@ mod tests {
         vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
         "expr stmt 01"
     )]
+    #[test_case(
+        "let one = 1; let two = 2;",
+        vec![Op::Constant(3), Op::SetGlobal(0), Op::Constant(4), Op::SetGlobal(1)],
+        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        "let stmt 01"
+    )]
+    #[test_case(
+        "let one = 1; one;",
+        vec![Op::Constant(3), Op::SetGlobal(0), Op::GetGlobal(0), Op::Pop],
+        vec![Object::Unit, Object::False, Object::True, Object::Integer(1)] ;
+        "let stmt 02"
+    )]
+    #[test_case(
+        "let one = 1; let two = one; two",
+        vec![Op::Constant(3), Op::SetGlobal(0), Op::GetGlobal(0), Op::SetGlobal(1), Op::GetGlobal(1)],
+        vec![Object::Unit, Object::False, Object::True, Object::Integer(1)] ;
+        "let stmt 03"
+    )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);
         let ast = parser.parse().unwrap();
         let mut compiler = Compiler::new();
-        let byte_code = compiler.compile(&ast);
+        let byte_code = compiler.compile(&ast).unwrap();
 
         assert_eq!((&byte_code.bytes[..]).decode().unwrap(), ops);
         assert_eq!(byte_code.constants, constants);

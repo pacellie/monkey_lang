@@ -57,6 +57,13 @@ impl MonkeyError {
     {
         MonkeyError::RuntimeError(format!("missing index: `{}`", msg.into()))
     }
+
+    pub fn undefined_variable<S>(msg: S) -> MonkeyError
+    where
+        S: Into<String>,
+    {
+        MonkeyError::CompilerError(format!("undefined variable {}", msg.into()))
+    }
 }
 
 impl fmt::Display for MonkeyError {
