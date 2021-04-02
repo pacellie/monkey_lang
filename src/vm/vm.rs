@@ -3,6 +3,7 @@ use crate::error::{MonkeyError, Result};
 use crate::vm::Object;
 
 const STACK_SIZE: usize = 2048;
+// TODO: Introduce Heap Size 2^16
 
 pub struct VirtualMachine {
     pub bytes: Vec<u8>,
@@ -55,6 +56,7 @@ impl VirtualMachine {
                     let reference = self.pop()?;
                     let obj = self.dereference(reference)?;
 
+                    // TODO: Only dereference when necessary
                     match obj {
                         Object::False => {
                             let address = self.u16();
@@ -81,6 +83,7 @@ impl VirtualMachine {
                     let index = self.u16() as usize;
                     let reference = self.pop()?;
 
+                    // TODO: Get rid of this -> allocate max stack size / heap size at vm start? -> update tests
                     while self.globals.len() <= index {
                         self.globals.push(0);
                     }
@@ -93,6 +96,17 @@ impl VirtualMachine {
                     let reference = self.globals[index];
                     self.push(reference)?;
                     self.pc += 2;
+                }
+                Op::ARRAY => {
+                    let n = self.u16() as usize;
+                    self.pc += 2;
+
+                    let references = &self.stack[self.sp - n..self.sp];
+                    self.sp = self.sp - n;
+                    let obj = Object::Array(references.to_vec());
+
+                    let reference = self.reference(obj);
+                    self.push(reference)?;
                 }
                 _ => {
                     return Err(MonkeyError::RuntimeError(
@@ -107,10 +121,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn u16(&self) -> u16 {
-        u16::from_be_bytes([self.bytes[self.pc + 1], self.bytes[self.pc + 2]])
-    }
-
     fn execute_bin_op(&mut self, op: u8) -> Result<()> {
         let right = self.pop()?;
         let left = self.pop()?;
@@ -118,6 +128,7 @@ impl VirtualMachine {
         let left = self.dereference(left)?;
         let right = self.dereference(right)?;
 
+        // TODO: Only derefence when necessary
         #[rustfmt::skip]
         let reference = match (left, op, right) {
             (Object::Integer(i), Op::ADD, Object::Integer(j)) => {
@@ -152,10 +163,15 @@ impl VirtualMachine {
             (Object::True , Op::NEQ, Object::False) => 2,
             (Object::True , Op::NEQ, Object::True ) => 1,
 
+            (Object::String(s1), Op::ADD, Object::String(s2)) => {
+                let obj = Object::String(s1.clone() + s2);
+                self.reference(obj)
+            }
+
             (left, op, right) => {
                 return Err(MonkeyError::type_mismatch(format!(
                     "{} {} {}",
-                    left, op, right
+                    left, Op::format(op), right
                 )))
             }
         };
@@ -167,6 +183,7 @@ impl VirtualMachine {
         let reference = self.pop()?;
         let obj = self.dereference(reference)?;
 
+        // TODO: Only dereference when necessary
         let reference = match (op, obj) {
             (Op::MINUS, Object::Integer(i)) => {
                 let obj = Object::Integer(-i);
@@ -174,10 +191,20 @@ impl VirtualMachine {
             }
             (Op::BANG, Object::False) => 2,
             (Op::BANG, Object::True) => 1,
-            (op, obj) => return Err(MonkeyError::type_mismatch(format!("{} {}", op, obj))),
+            (op, obj) => {
+                return Err(MonkeyError::type_mismatch(format!(
+                    "{} {}",
+                    Op::format(op),
+                    obj
+                )))
+            }
         };
 
         self.push(reference)
+    }
+
+    fn u16(&self) -> u16 {
+        u16::from_be_bytes([self.bytes[self.pc + 1], self.bytes[self.pc + 2]])
     }
 
     fn reference(&mut self, obj: Object) -> Reference {
@@ -197,6 +224,7 @@ impl VirtualMachine {
         if self.sp >= STACK_SIZE {
             Err(MonkeyError::RuntimeError("stack overflow".to_string()))
         } else {
+            // TODO: Fix stack size?
             if self.sp == self.stack.len() {
                 self.stack.push(reference);
             } else {
@@ -208,6 +236,7 @@ impl VirtualMachine {
     }
 
     fn pop(&mut self) -> Result<Reference> {
+        // TODO: Optimize min(0, self.sp - 1)
         if self.sp == 0 {
             Ok(0)
         } else {
@@ -217,6 +246,7 @@ impl VirtualMachine {
     }
 
     pub fn top(&self) -> Result<&Object> {
+        // TODO: Optimize min(0, self.sp - 1)
         if self.sp == 0 {
             Ok(&self.heap[0])
         } else {
@@ -725,6 +755,102 @@ mod tests {
             Object::True,
         ] ;
         "boolean expression 18"
+    )]
+    #[test_case(
+        "\"monkey\"",
+        1,
+        vec![3],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::string("monkey")
+        ] ;
+        "string expression 01"
+    )]
+    #[test_case(
+        "\"mon\" + \"key\"",
+        1,
+        vec![5, 4],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::string("mon"),
+            Object::string("key"),
+            Object::string("monkey"),
+        ] ;
+        "string expression 02"
+    )]
+    #[test_case(
+        "\"mon\" + \"key\" + \"banana\"",
+        1,
+        vec![7, 5],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::string("mon"),
+            Object::string("key"),
+            Object::string("banana"),
+            Object::string("monkey"),
+            Object::string("monkeybanana"),
+        ] ;
+        "string expression 03"
+    )]
+    #[test_case(
+        "[]",
+        1,
+        vec![3],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Array(vec![]),
+        ] ;
+        "array expression 01"
+    )]
+    #[test_case(
+        "[1, 2, 3]",
+        1,
+        vec![6, 4, 5],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2),
+            Object::Integer(3),
+            Object::Array(vec![3, 4, 5]),
+        ] ;
+        "array expression 02"
+    )]
+    #[test_case(
+        "[1 + 2, 3 * 4, 5 + 6]",
+        1,
+        vec![12, 10, 11, 8],
+        vec![],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1), // 3
+            Object::Integer(2),
+            Object::Integer(3), // 5
+            Object::Integer(4),
+            Object::Integer(5), // 7
+            Object::Integer(6),
+            Object::Integer(3), // 9
+            Object::Integer(12),
+            Object::Integer(11), // 11
+            Object::Array(vec![9, 10, 11])
+        ] ;
+        "array expression 03"
     )]
     #[test_case(
         "if (true) { 10 }",

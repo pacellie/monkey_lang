@@ -34,9 +34,12 @@ pub enum Op {
     JumpIfNot(Address),
     Jump(Address),
 
-    // Bindings
+    // Global Bindings
     GetGlobal(Binding),
     SetGlobal(Binding),
+
+    // Array
+    Array(u16),
 }
 
 #[rustfmt::skip]
@@ -66,6 +69,34 @@ impl Op {
 
     pub const GETGLOBAL: u8 = 17;
     pub const SETGLOBAL: u8 = 18;
+
+    pub const ARRAY    : u8 = 19;
+
+    pub fn format(op: u8) -> String {
+        match op {
+            Op::CONSTANT => "constant",
+            Op::POP => "pop",
+            Op::UNIT => "unit",
+            Op::FALSE => "false",
+            Op::TRUE => "true",
+            Op::ADD => "+",
+            Op::SUB => "-",
+            Op::MUL => "*",
+            Op::DIV => "/",
+            Op::EQ => "==",
+            Op::NEQ => "!=",
+            Op::LT => "<",
+            Op::GT => ">",
+            Op::MINUS => "-",
+            Op::BANG => "!",
+            Op::JUMPIFNOT => "jump_if_not",
+            Op::JUMP => "jump",
+            Op::GETGLOBAL => "get_global",
+            Op::SETGLOBAL => "set_global",
+            Op::ARRAY => "array",
+            _ => "?",
+        }.to_string()
+    }
 }
 
 impl fmt::Display for Op {
@@ -90,6 +121,7 @@ impl fmt::Display for Op {
             Op::Jump(address) => write!(f, "Jump {}", address),
             Op::GetGlobal(binding) => write!(f, "GetGlobal {}", binding),
             Op::SetGlobal(binding) => write!(f, "SetGlobal {}", binding),
+            Op::Array(n) => write!(f, "Array[{}]", n),
         }
     }
 }

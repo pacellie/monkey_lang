@@ -84,6 +84,17 @@ impl Compiler {
             Expression::Boolean(true) => {
                 self.emit(Op::True);
             }
+            Expression::String(s) => {
+                let reference = self.allocate(Object::String(s.to_string()));
+                self.emit(Op::Constant(reference));
+            }
+            Expression::Array(vec) => {
+                for expr in vec {
+                    self.compile_expr(expr)?;
+                }
+
+                self.emit(Op::Array(vec.len() as u16));
+            }
             Expression::Prefix { operator, expr } => {
                 self.compile_expr(expr)?;
                 match operator {
@@ -199,6 +210,10 @@ impl Compiler {
                 self.bytes.push(Op::SETGLOBAL);
                 self.bytes.extend_from_slice(&binding.to_be_bytes());
             }
+            Op::Array(n) => {
+                self.bytes.push(Op::ARRAY);
+                self.bytes.extend_from_slice(&n.to_be_bytes());
+            }
         }
     }
 
@@ -279,6 +294,11 @@ mod tests {
                     Op::SETGLOBAL => {
                         let binding = u16::from_be_bytes([self[i + 1], self[i + 2]]);
                         ops.push(Op::SetGlobal(binding));
+                        i += 2;
+                    }
+                    Op::ARRAY => {
+                        let n = u16::from_be_bytes([self[i + 1], self[i + 2]]);
+                        ops.push(Op::Array(n));
                         i += 2;
                     }
                     _ => {
@@ -378,21 +398,131 @@ mod tests {
         "boolean expression 09"
     )]
     #[test_case(
+        "\"monkey\"",
+        vec![Op::Constant(3)],
+        vec![Object::Unit, Object::False, Object::True, Object::string("monkey")] ;
+        "string expression 01"
+    )]
+    #[test_case(
+        "\"mon\" + \"key\"",
+        vec![Op::Constant(3), Op::Constant(4), Op::Add],
+        vec![Object::Unit, Object::False, Object::True, Object::string("mon"), Object::string("key")] ;
+        "string expression 02"
+    )]
+    #[test_case(
+        "[]",
+        vec![Op::Array(0)],
+        vec![Object::Unit, Object::False, Object::True] ;
+        "array expression 01"
+    )]
+    #[test_case(
+        "[1, 2, 3]",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Constant(5),
+            Op::Array(3)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2),
+            Object::Integer(3)
+        ] ;
+        "array expression 02"
+    )]
+    #[test_case(
+        "[1 + 2, 3 - 4, 5 * 6]",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Add, Op::Constant(5),
+            Op::Constant(6),
+            Op::Sub,
+            Op::Constant(7),
+            Op::Constant(8),
+            Op::Mul,
+            Op::Array(3)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2),
+            Object::Integer(3),
+            Object::Integer(4),
+            Object::Integer(5),
+            Object::Integer(6)
+        ] ;
+        "array expression 03"
+    )]
+    #[test_case(
         "if (true) { 10 }; 20;",
-        vec![Op::True, Op::JumpIfNot(10), Op::Constant(3), Op::Jump(11), Op::Unit, Op::Pop, Op::Constant(4), Op::Pop],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(10), Object::Integer(20)] ;
+        vec![
+            Op::True,
+            Op::JumpIfNot(10),
+            Op::Constant(3),
+            Op::Jump(11),
+            Op::Unit,
+            Op::Pop,
+            Op::Constant(4),
+            Op::Pop
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(10),
+            Object::Integer(20)
+        ] ;
         "if expression 01"
     )]
     #[test_case(
         "if (true) { 1; 2; 3 }",
-        vec![Op::True, Op::JumpIfNot(18), Op::Constant(3), Op::Pop, Op::Constant(4), Op::Pop, Op::Constant(5), Op::Jump(19), Op::Unit],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2), Object::Integer(3)] ;
+        vec![
+            Op::True,
+            Op::JumpIfNot(18),
+            Op::Constant(3),
+            Op::Pop,
+            Op::Constant(4),
+            Op::Pop,
+            Op::Constant(5),
+            Op::Jump(19),
+            Op::Unit
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2),
+            Object::Integer(3)
+        ] ;
         "if expression 02"
     )]
     #[test_case(
         "if (true) { 10 } else { 20 }; 30;",
-        vec![Op::True, Op::JumpIfNot(10), Op::Constant(3), Op::Jump(13), Op::Constant(4), Op::Pop, Op::Constant(5), Op::Pop],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(10), Object::Integer(20), Object::Integer(30)] ;
+        vec![
+            Op::True,
+            Op::JumpIfNot(10),
+            Op::Constant(3),
+            Op::Jump(13),
+            Op::Constant(4),
+            Op::Pop,
+            Op::Constant(5),
+            Op::Pop
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(10),
+            Object::Integer(20),
+            Object::Integer(30)
+        ] ;
         "if expression 03"
     )]
     #[test_case(
