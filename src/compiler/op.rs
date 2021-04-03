@@ -3,6 +3,7 @@ use std::fmt;
 pub type Reference = u16;
 pub type Address = u16;
 pub type Binding = u16;
+pub type N = u16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -39,7 +40,10 @@ pub enum Op {
     SetGlobal(Binding),
 
     // Array
-    Array(u16),
+    Array(N),
+
+    // Map
+    Map(N),
 }
 
 #[rustfmt::skip]
@@ -72,6 +76,8 @@ impl Op {
 
     pub const ARRAY    : u8 = 19;
 
+    pub const MAP      : u8 = 20;
+
     pub fn format(op: u8) -> String {
         match op {
             Op::CONSTANT => "constant",
@@ -94,6 +100,7 @@ impl Op {
             Op::GETGLOBAL => "get_global",
             Op::SETGLOBAL => "set_global",
             Op::ARRAY => "array",
+            Op::MAP => "map",
             _ => "?",
         }.to_string()
     }
@@ -122,6 +129,7 @@ impl fmt::Display for Op {
             Op::GetGlobal(binding) => write!(f, "GetGlobal {}", binding),
             Op::SetGlobal(binding) => write!(f, "SetGlobal {}", binding),
             Op::Array(n) => write!(f, "Array[{}]", n),
+            Op::Map(n) => write!(f, "Map[{}]", n),
         }
     }
 }

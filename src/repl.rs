@@ -76,7 +76,11 @@ pub fn repl(runtime: Runtime) -> io::Result<()> {
 
     let env = Rc::new(RefCell::new(Environment::empty()));
 
-    let mut heap = vec![vm::Object::Unit, vm::Object::False, vm::Object::True];
+    let mut heap = vec![
+        vm::Object::unit(),
+        vm::Object::boolean(false),
+        vm::Object::boolean(true),
+    ];
     let mut symbol_table = SymbolTable::new();
     let mut globals = vec![];
 

@@ -21,7 +21,11 @@ impl Compiler {
     pub fn new() -> Compiler {
         Compiler {
             bytes: vec![],
-            constants: vec![Object::Unit, Object::False, Object::True],
+            constants: vec![
+                Object::unit(),
+                Object::boolean(false),
+                Object::boolean(true),
+            ],
             symbol_table: SymbolTable::new(),
         }
     }
@@ -75,7 +79,7 @@ impl Compiler {
                 self.emit(Op::GetGlobal(index));
             }
             Expression::Integer(i) => {
-                let reference = self.allocate(Object::Integer(*i));
+                let reference = self.allocate(Object::integer(*i));
                 self.emit(Op::Constant(reference));
             }
             Expression::Boolean(false) => {
@@ -85,7 +89,7 @@ impl Compiler {
                 self.emit(Op::True);
             }
             Expression::String(s) => {
-                let reference = self.allocate(Object::String(s.to_string()));
+                let reference = self.allocate(Object::string(s));
                 self.emit(Op::Constant(reference));
             }
             Expression::Array(vec) => {
@@ -94,6 +98,14 @@ impl Compiler {
                 }
 
                 self.emit(Op::Array(vec.len() as u16));
+            }
+            Expression::Map(vec) => {
+                for (key, value) in vec {
+                    self.compile_expr(key)?;
+                    self.compile_expr(value)?;
+                }
+
+                self.emit(Op::Map(vec.len() as u16));
             }
             Expression::Prefix { operator, expr } => {
                 self.compile_expr(expr)?;
@@ -214,6 +226,10 @@ impl Compiler {
                 self.bytes.push(Op::ARRAY);
                 self.bytes.extend_from_slice(&n.to_be_bytes());
             }
+            Op::Map(n) => {
+                self.bytes.push(Op::MAP);
+                self.bytes.extend_from_slice(&n.to_be_bytes());
+            }
         }
     }
 
@@ -301,6 +317,11 @@ mod tests {
                         ops.push(Op::Array(n));
                         i += 2;
                     }
+                    Op::MAP => {
+                        let n = u16::from_be_bytes([self[i + 1], self[i + 2]]);
+                        ops.push(Op::Map(n));
+                        i += 2;
+                    }
                     _ => {
                         return None;
                     }
@@ -321,11 +342,11 @@ mod tests {
             Op::Add
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "integer arithmetic 01"
     )]
@@ -337,11 +358,11 @@ mod tests {
             Op::Sub
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "integer arithmetic 02"
     )]
@@ -353,11 +374,11 @@ mod tests {
             Op::Mul
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "integer arithmetic 03"
     )]
@@ -369,11 +390,11 @@ mod tests {
             Op::Div
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(2),
-            Object::Integer(1)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(2),
+            Object::integer(1)
         ] ;
         "integer arithmetic 04"
     )]
@@ -384,10 +405,10 @@ mod tests {
             Op::Minus
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1)
         ] ;
         "integer arithmetic 05"
     )]
@@ -397,9 +418,9 @@ mod tests {
             Op::False
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "boolean expression 01"
     )]
@@ -409,9 +430,9 @@ mod tests {
             Op::True
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "boolean expression 02"
     )]
@@ -423,11 +444,11 @@ mod tests {
             Op::Eq
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "boolean expression 03"
     )]
@@ -439,11 +460,11 @@ mod tests {
             Op::Neq
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "boolean expression 04"
     )]
@@ -455,11 +476,11 @@ mod tests {
             Op::Lt
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "boolean expression 05"
     )]
@@ -471,11 +492,11 @@ mod tests {
             Op::Gt
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "boolean expression 06"
     )]
@@ -487,9 +508,9 @@ mod tests {
             Op::Eq
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "boolean expression 07"
     )]
@@ -501,9 +522,9 @@ mod tests {
             Op::Neq
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "boolean expression 08"
     )]
@@ -514,9 +535,9 @@ mod tests {
             Op::True,
             Op::Bang],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "boolean expression 09"
     )]
@@ -526,9 +547,9 @@ mod tests {
             Op::Constant(3)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
             Object::string("monkey")
         ] ;
         "string expression 01"
@@ -541,9 +562,9 @@ mod tests {
             Op::Add
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
             Object::string("mon"),
             Object::string("key")
         ] ;
@@ -555,9 +576,9 @@ mod tests {
             Op::Array(0)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
         ] ;
         "array expression 01"
     )]
@@ -570,12 +591,12 @@ mod tests {
             Op::Array(3)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2),
-            Object::Integer(3)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3)
         ] ;
         "array expression 02"
     )]
@@ -593,17 +614,79 @@ mod tests {
             Op::Array(3)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2),
-            Object::Integer(3),
-            Object::Integer(4),
-            Object::Integer(5),
-            Object::Integer(6)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::integer(5),
+            Object::integer(6)
         ] ;
         "array expression 03"
+    )]
+    #[test_case(
+        "{}",
+        vec![
+            Op::Map(0),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+        ] ;
+        "map expression 01"
+    )]
+    #[test_case(
+        "{1: 2, 3: 4, 5: 6}",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Constant(5),
+            Op::Constant(6),
+            Op::Constant(7),
+            Op::Constant(8),
+            Op::Map(3),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::integer(5),
+            Object::integer(6),
+        ] ;
+        "map expression 02"
+    )]
+    #[test_case(
+        "{1: 2 + 3, 4: 5 * 6}",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Constant(5),
+            Op::Add,
+            Op::Constant(6),
+            Op::Constant(7),
+            Op::Constant(8),
+            Op::Mul,
+            Op::Map(2),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::integer(5),
+            Object::integer(6),
+        ] ;
+        "map expression 03"
     )]
     #[test_case(
         "if (true) { 10 }; 20;",
@@ -618,11 +701,11 @@ mod tests {
             Op::Pop
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(10),
-            Object::Integer(20)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(10),
+            Object::integer(20)
         ] ;
         "if expression 01"
     )]
@@ -640,12 +723,12 @@ mod tests {
             Op::Unit
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2),
-            Object::Integer(3)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3)
         ] ;
         "if expression 02"
     )]
@@ -662,12 +745,12 @@ mod tests {
             Op::Pop
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(10),
-            Object::Integer(20),
-            Object::Integer(30)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(10),
+            Object::integer(20),
+            Object::integer(30)
         ] ;
         "if expression 03"
     )]
@@ -679,11 +762,11 @@ mod tests {
             Op::Constant(4)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "expr stmt 01"
     )]
@@ -696,11 +779,11 @@ mod tests {
             Op::SetGlobal(1)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1),
-            Object::Integer(2)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2)
         ] ;
         "let stmt 01"
     )]
@@ -713,10 +796,10 @@ mod tests {
             Op::Pop
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1)
         ] ;
         "let stmt 02"
     )]
@@ -730,10 +813,10 @@ mod tests {
             Op::GetGlobal(1)
         ],
         vec![
-            Object::Unit,
-            Object::False,
-            Object::True,
-            Object::Integer(1)
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1)
         ] ;
         "let stmt 03"
     )]
