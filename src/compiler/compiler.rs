@@ -315,104 +315,250 @@ mod tests {
 
     #[test_case(
         "1 + 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Add],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Add
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "integer arithmetic 01"
     )]
     #[test_case(
         "1 - 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Sub],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Sub
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "integer arithmetic 02"
     )]
     #[test_case(
         "1 * 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Mul],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Mul
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "integer arithmetic 03"
     )]
     #[test_case(
         "2 / 1",
-        vec![Op::Constant(3), Op::Constant(4), Op::Div],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(2), Object::Integer(1)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Div
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(2),
+            Object::Integer(1)
+        ] ;
         "integer arithmetic 04"
     )]
     #[test_case(
         "-1",
-        vec![Op::Constant(3), Op::Minus],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1)] ;
+        vec![
+            Op::Constant(3),
+            Op::Minus
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1)
+        ] ;
         "integer arithmetic 05"
     )]
     #[test_case(
         "false",
-        vec![Op::False],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+            Op::False
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "boolean expression 01"
     )]
     #[test_case(
         "true",
-        vec![Op::True],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+            Op::True
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "boolean expression 02"
     )]
     #[test_case(
         "1 == 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Eq],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Eq
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "boolean expression 03"
     )]
     #[test_case(
         "1 != 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Neq],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Neq
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "boolean expression 04"
     )]
     #[test_case(
         "1 < 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Lt],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Lt
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "boolean expression 05"
     )]
     #[test_case(
         "1 > 2",
-        vec![Op::Constant(3), Op::Constant(4), Op::Gt],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Gt
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "boolean expression 06"
     )]
     #[test_case(
         "true == false",
-        vec![Op::True, Op::False, Op::Eq],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+            Op::True,
+            Op::False,
+            Op::Eq
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "boolean expression 07"
     )]
     #[test_case(
         "true != false",
-        vec![Op::True, Op::False, Op::Neq],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+            Op::True,
+            Op::False,
+            Op::Neq
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "boolean expression 08"
     )]
     #[test_case(
         "!true",
-        vec![Op::True, Op::Bang],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+
+            Op::True,
+            Op::Bang],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "boolean expression 09"
     )]
     #[test_case(
         "\"monkey\"",
-        vec![Op::Constant(3)],
-        vec![Object::Unit, Object::False, Object::True, Object::string("monkey")] ;
+        vec![
+            Op::Constant(3)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::string("monkey")
+        ] ;
         "string expression 01"
     )]
     #[test_case(
         "\"mon\" + \"key\"",
-        vec![Op::Constant(3), Op::Constant(4), Op::Add],
-        vec![Object::Unit, Object::False, Object::True, Object::string("mon"), Object::string("key")] ;
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Add
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::string("mon"),
+            Object::string("key")
+        ] ;
         "string expression 02"
     )]
     #[test_case(
         "[]",
-        vec![Op::Array(0)],
-        vec![Object::Unit, Object::False, Object::True] ;
+        vec![
+            Op::Array(0)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True
+        ] ;
         "array expression 01"
     )]
     #[test_case(
@@ -527,26 +673,68 @@ mod tests {
     )]
     #[test_case(
         "1; 2",
-        vec![Op::Constant(3), Op::Pop, Op::Constant(4)],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::Pop,
+            Op::Constant(4)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "expr stmt 01"
     )]
     #[test_case(
         "let one = 1; let two = 2;",
-        vec![Op::Constant(3), Op::SetGlobal(0), Op::Constant(4), Op::SetGlobal(1)],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1), Object::Integer(2)] ;
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::Constant(4),
+            Op::SetGlobal(1)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1),
+            Object::Integer(2)
+        ] ;
         "let stmt 01"
     )]
     #[test_case(
         "let one = 1; one;",
-        vec![Op::Constant(3), Op::SetGlobal(0), Op::GetGlobal(0), Op::Pop],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1)] ;
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Pop
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1)
+        ] ;
         "let stmt 02"
     )]
     #[test_case(
         "let one = 1; let two = one; two",
-        vec![Op::Constant(3), Op::SetGlobal(0), Op::GetGlobal(0), Op::SetGlobal(1), Op::GetGlobal(1)],
-        vec![Object::Unit, Object::False, Object::True, Object::Integer(1)] ;
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::SetGlobal(1),
+            Op::GetGlobal(1)
+        ],
+        vec![
+            Object::Unit,
+            Object::False,
+            Object::True,
+            Object::Integer(1)
+        ] ;
         "let stmt 03"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {

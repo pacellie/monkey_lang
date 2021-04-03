@@ -3,7 +3,11 @@ use crate::error::{MonkeyError, Result};
 use crate::vm::Object;
 
 const STACK_SIZE: usize = 2048;
-// TODO: Introduce Heap Size 2^16
+const GLOBALS_SIZE: usize = 65536;
+
+const UNIT: u16 = 0;
+const FALSE: u16 = 1;
+const TRUE: u16 = 2;
 
 pub struct VirtualMachine {
     pub bytes: Vec<u8>,
@@ -12,6 +16,7 @@ pub struct VirtualMachine {
     pub stack: Vec<Reference>,
     pub sp: usize,
     pub pc: usize,
+    pub gp: usize,
 }
 
 impl VirtualMachine {
@@ -19,10 +24,11 @@ impl VirtualMachine {
         VirtualMachine {
             bytes: byte_code.bytes,
             heap: byte_code.constants,
-            globals: vec![],
-            stack: vec![],
+            globals: vec![0; GLOBALS_SIZE],
+            stack: vec![0; STACK_SIZE],
             sp: 0,
             pc: 0,
+            gp: 0,
         }
     }
 
@@ -35,16 +41,16 @@ impl VirtualMachine {
                     self.pc += 2;
                 }
                 Op::POP => {
-                    self.pop()?;
+                    self.pop();
                 }
                 Op::UNIT => {
-                    self.push(0)?;
+                    self.push(UNIT)?;
                 }
                 Op::FALSE => {
-                    self.push(1)?;
+                    self.push(FALSE)?;
                 }
                 Op::TRUE => {
-                    self.push(2)?;
+                    self.push(TRUE)?;
                 }
                 Op::ADD | Op::SUB | Op::MUL | Op::DIV | Op::EQ | Op::NEQ | Op::LT | Op::GT => {
                     self.execute_bin_op(self.bytes[self.pc])?;
@@ -53,23 +59,21 @@ impl VirtualMachine {
                     self.execute_un_op(self.bytes[self.pc])?;
                 }
                 Op::JUMPIFNOT => {
-                    let reference = self.pop()?;
-                    let obj = self.dereference(reference)?;
+                    let reference = self.pop();
 
-                    // TODO: Only dereference when necessary
-                    match obj {
-                        Object::False => {
+                    match reference {
+                        FALSE => {
                             let address = self.u16();
                             self.pc = address as usize;
                             self.pc -= 1;
                         }
-                        Object::True => {
+                        TRUE => {
                             self.pc += 2;
                         }
-                        obj => {
+                        reference => {
                             return Err(MonkeyError::type_mismatch(format!(
                                 "if ({}) {{...}}",
-                                obj
+                                self.dereference(reference)?
                             )));
                         }
                     }
@@ -81,13 +85,8 @@ impl VirtualMachine {
                 }
                 Op::SETGLOBAL => {
                     let index = self.u16() as usize;
-                    let reference = self.pop()?;
-
-                    // TODO: Get rid of this -> allocate max stack size / heap size at vm start? -> update tests
-                    while self.globals.len() <= index {
-                        self.globals.push(0);
-                    }
-
+                    self.gp = self.gp.max(index);
+                    let reference = self.pop();
                     self.globals[index] = reference;
                     self.pc += 2;
                 }
@@ -122,8 +121,8 @@ impl VirtualMachine {
     }
 
     fn execute_bin_op(&mut self, op: u8) -> Result<()> {
-        let right = self.pop()?;
-        let left = self.pop()?;
+        let right = self.pop();
+        let left = self.pop();
 
         let left = self.dereference(left)?;
         let right = self.dereference(right)?;
@@ -148,20 +147,20 @@ impl VirtualMachine {
                 self.reference(obj)
             }
 
-            (Object::Integer(i), Op::EQ , Object::Integer(j)) => if i == j { 2 } else { 1 },
-            (Object::Integer(i), Op::NEQ, Object::Integer(j)) => if i != j { 2 } else { 1 },
-            (Object::Integer(i), Op::LT , Object::Integer(j)) => if i < j  { 2 } else { 1 },
-            (Object::Integer(i), Op::GT , Object::Integer(j)) => if i > j  { 2 } else { 1 },
+            (Object::Integer(i), Op::EQ , Object::Integer(j)) => if i == j { TRUE } else { FALSE },
+            (Object::Integer(i), Op::NEQ, Object::Integer(j)) => if i != j { TRUE } else { FALSE },
+            (Object::Integer(i), Op::LT , Object::Integer(j)) => if i < j  { TRUE } else { FALSE },
+            (Object::Integer(i), Op::GT , Object::Integer(j)) => if i > j  { TRUE } else { FALSE },
 
-            (Object::False, Op::EQ, Object::False) => 2,
-            (Object::False, Op::EQ, Object::True ) => 1,
-            (Object::True , Op::EQ, Object::False) => 1,
-            (Object::True , Op::EQ, Object::True ) => 2,
+            (Object::False, Op::EQ, Object::False) => TRUE,
+            (Object::False, Op::EQ, Object::True ) => FALSE,
+            (Object::True , Op::EQ, Object::False) => FALSE,
+            (Object::True , Op::EQ, Object::True ) => TRUE,
 
-            (Object::False, Op::NEQ, Object::False) => 1,
-            (Object::False, Op::NEQ, Object::True ) => 2,
-            (Object::True , Op::NEQ, Object::False) => 2,
-            (Object::True , Op::NEQ, Object::True ) => 1,
+            (Object::False, Op::NEQ, Object::False) => FALSE,
+            (Object::False, Op::NEQ, Object::True ) => TRUE,
+            (Object::True , Op::NEQ, Object::False) => TRUE,
+            (Object::True , Op::NEQ, Object::True ) => FALSE,
 
             (Object::String(s1), Op::ADD, Object::String(s2)) => {
                 let obj = Object::String(s1.clone() + s2);
@@ -180,7 +179,7 @@ impl VirtualMachine {
     }
 
     fn execute_un_op(&mut self, op: u8) -> Result<()> {
-        let reference = self.pop()?;
+        let reference = self.pop();
         let obj = self.dereference(reference)?;
 
         // TODO: Only dereference when necessary
@@ -189,8 +188,8 @@ impl VirtualMachine {
                 let obj = Object::Integer(-i);
                 self.reference(obj)
             }
-            (Op::BANG, Object::False) => 2,
-            (Op::BANG, Object::True) => 1,
+            (Op::BANG, Object::False) => TRUE,
+            (Op::BANG, Object::True) => FALSE,
             (op, obj) => {
                 return Err(MonkeyError::type_mismatch(format!(
                     "{} {}",
@@ -224,34 +223,22 @@ impl VirtualMachine {
         if self.sp >= STACK_SIZE {
             Err(MonkeyError::RuntimeError("stack overflow".to_string()))
         } else {
-            // TODO: Fix stack size?
-            if self.sp == self.stack.len() {
-                self.stack.push(reference);
-            } else {
-                self.stack[self.sp] = reference;
-            }
+            self.stack[self.sp] = reference;
             self.sp += 1;
             Ok(())
         }
     }
 
-    fn pop(&mut self) -> Result<Reference> {
-        // TODO: Optimize min(0, self.sp - 1)
-        if self.sp == 0 {
-            Ok(0)
-        } else {
+    fn pop(&mut self) -> Reference {
+        if self.sp > 0 {
             self.sp -= 1;
-            Ok(self.stack[self.sp])
         }
+        self.stack[self.sp]
     }
 
     pub fn top(&self) -> Result<&Object> {
-        // TODO: Optimize min(0, self.sp - 1)
-        if self.sp == 0 {
-            Ok(&self.heap[0])
-        } else {
-            self.dereference(self.stack[self.sp - 1])
-        }
+        let p = if self.sp > 0 { self.sp - 1 } else { 0 };
+        self.dereference(self.stack[p])
     }
 }
 
@@ -269,7 +256,7 @@ mod tests {
         "1",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -282,7 +269,7 @@ mod tests {
         "2",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -294,8 +281,8 @@ mod tests {
     #[test_case(
         "1 + 2",
         1,
-        vec![5, 4],
-        vec![],
+        vec![5],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -309,8 +296,8 @@ mod tests {
     #[test_case(
         "1 - 2",
         1,
-        vec![5, 4],
-        vec![],
+        vec![5],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -324,8 +311,8 @@ mod tests {
     #[test_case(
         "1 * 2",
         1,
-        vec![5, 4],
-        vec![],
+        vec![5],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -339,8 +326,8 @@ mod tests {
     #[test_case(
         "4 / 2",
         1,
-        vec![5, 4],
-        vec![],
+        vec![5],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -354,8 +341,8 @@ mod tests {
     #[test_case(
         "50 / 2 * 2 + 10 - 5",
         1,
-        vec![11, 7],
-        vec![],
+        vec![11],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -375,8 +362,8 @@ mod tests {
     #[test_case(
         "5 + 5 + 5 + 5 - 10",
         1,
-        vec![11, 7],
-        vec![],
+        vec![11],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -396,8 +383,8 @@ mod tests {
     #[test_case(
         "2 * 2 * 2 * 2 * 2",
         1,
-        vec![11, 7],
-        vec![],
+        vec![11],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -417,8 +404,8 @@ mod tests {
     #[test_case(
         "5 * 2 + 10",
         1,
-        vec![7, 5],
-        vec![],
+        vec![7],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -434,8 +421,8 @@ mod tests {
     #[test_case(
         "5 + 2 * 10",
         1,
-        vec![7, 6, 5],
-        vec![],
+        vec![7],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -451,8 +438,8 @@ mod tests {
     #[test_case(
         "5 * (2 + 10)",
         1,
-        vec![7, 6, 5],
-        vec![],
+        vec![7],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -469,7 +456,7 @@ mod tests {
         "-5",
         1,
         vec![4],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -482,8 +469,8 @@ mod tests {
     #[test_case(
         "-50 + 100 + -50",
         1,
-        vec![9, 8],
-        vec![],
+        vec![9],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -501,8 +488,8 @@ mod tests {
     #[test_case(
         "(5 + 10 * 2 + 15 / 3) * 2 + -10",
         1,
-        vec![16, 15, 7],
-        vec![],
+        vec![16],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -528,7 +515,7 @@ mod tests {
         "false",
         1,
         vec![1],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -540,7 +527,7 @@ mod tests {
         "true",
         1,
         vec![2],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -551,8 +538,8 @@ mod tests {
     #[test_case(
         "1 == 1",
         1,
-        vec![2, 4],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -565,8 +552,8 @@ mod tests {
     #[test_case(
         "1 != 1",
         1,
-        vec![1, 4],
-        vec![],
+        vec![1],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -579,8 +566,8 @@ mod tests {
     #[test_case(
         "1 == 2",
         1,
-        vec![1, 4],
-        vec![],
+        vec![1],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -593,8 +580,8 @@ mod tests {
     #[test_case(
         "1 != 2",
         1,
-        vec![2, 4],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -607,8 +594,8 @@ mod tests {
     #[test_case(
         "1 < 2",
         1,
-        vec![2, 4],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -621,8 +608,8 @@ mod tests {
     #[test_case(
         "1 > 2",
         1,
-        vec![1, 4],
-        vec![],
+        vec![1],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -635,8 +622,8 @@ mod tests {
     #[test_case(
         "1 < 1",
         1,
-        vec![1, 4],
-        vec![],
+        vec![1],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -649,8 +636,8 @@ mod tests {
     #[test_case(
         "1 > 1",
         1,
-        vec![1, 4],
-        vec![],
+        vec![1],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -663,8 +650,8 @@ mod tests {
     #[test_case(
         "true == true",
         1,
-        vec![2, 2],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -675,8 +662,8 @@ mod tests {
     #[test_case(
         "false == false",
         1,
-        vec![2, 1],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -687,8 +674,8 @@ mod tests {
     #[test_case(
         "true != false",
         1,
-        vec![2, 1],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -699,8 +686,8 @@ mod tests {
     #[test_case(
         "false != true",
         1,
-        vec![2, 2],
-        vec![],
+        vec![2],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -712,7 +699,7 @@ mod tests {
         "!true",
         1,
         vec![1],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -724,7 +711,7 @@ mod tests {
         "!false",
         1,
         vec![2],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -736,7 +723,7 @@ mod tests {
         "!!true",
         1,
         vec![2],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -748,7 +735,7 @@ mod tests {
         "!!false",
         1,
         vec![1],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -760,7 +747,7 @@ mod tests {
         "\"monkey\"",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -772,8 +759,8 @@ mod tests {
     #[test_case(
         "\"mon\" + \"key\"",
         1,
-        vec![5, 4],
-        vec![],
+        vec![5],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -787,8 +774,8 @@ mod tests {
     #[test_case(
         "\"mon\" + \"key\" + \"banana\"",
         1,
-        vec![7, 5],
-        vec![],
+        vec![7],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -805,7 +792,7 @@ mod tests {
         "[]",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -817,8 +804,8 @@ mod tests {
     #[test_case(
         "[1, 2, 3]",
         1,
-        vec![6, 4, 5],
-        vec![],
+        vec![6],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -833,8 +820,8 @@ mod tests {
     #[test_case(
         "[1 + 2, 3 * 4, 5 + 6]",
         1,
-        vec![12, 10, 11, 8],
-        vec![],
+        vec![12],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -856,7 +843,7 @@ mod tests {
         "if (true) { 10 }",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -869,7 +856,7 @@ mod tests {
         "if (true) { 10 } else { 20 }",
         1,
         vec![3],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -883,7 +870,7 @@ mod tests {
         "if (false) { 10 } else { 20 }",
         1,
         vec![4],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -897,7 +884,7 @@ mod tests {
         "if (false) { 10 }",
         1,
         vec![0],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -910,7 +897,7 @@ mod tests {
         "1; 2",
         1,
         vec![4],
-        vec![],
+        vec![0],
         vec![
             Object::Unit,
             Object::False,
@@ -936,7 +923,7 @@ mod tests {
     #[test_case(
         "let one = 1; let two = 2; one + two",
         1,
-        vec![5, 4],
+        vec![5],
         vec![3, 4],
         vec![
             Object::Unit,
@@ -951,7 +938,7 @@ mod tests {
     #[test_case(
         "let one = 1; let two = one + one; one + two",
         1,
-        vec![5, 4],
+        vec![5],
         vec![3, 4],
         vec![
             Object::Unit,
@@ -980,8 +967,8 @@ mod tests {
         vm.run().unwrap();
 
         assert_eq!(vm.sp, sp);
-        assert_eq!(vm.stack, stack);
-        assert_eq!(vm.globals, globals);
+        assert_eq!(vm.stack[..vm.sp], stack[..]);
+        assert_eq!(vm.globals[..vm.gp + 1], globals[..]);
         assert_eq!(vm.heap, heap)
     }
 }
