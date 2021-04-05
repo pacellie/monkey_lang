@@ -1,7 +1,4 @@
 use crate::compiler::Compiler;
-use crate::compiler::Reference;
-use crate::error::MonkeyError;
-use crate::interpreter;
 use crate::interpreter::{eval_program, Environment};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -28,61 +25,9 @@ pub enum Runtime {
     VirtualMachine,
 }
 
-fn interpret(
-    env: Rc<RefCell<Environment>>,
-    input: &str,
-) -> std::result::Result<interpreter::Object, Vec<MonkeyError>> {
-    let lexer = Lexer::new(input.as_bytes());
-    let mut parser = Parser::new(lexer);
-    let ast = parser.parse()?;
-
-    eval_program(env, ast).map_err(|error| vec![error])
-}
-
-fn compile_run(
-    heap: Vec<vm::Object>,
-    symbol_table: SymbolTable,
-    globals: Vec<Reference>,
-    input: &str,
-) -> std::result::Result<(vm::Object, Vec<vm::Object>, SymbolTable, Vec<Reference>), Vec<MonkeyError>>
-{
-    let lexer = Lexer::new(input.as_bytes());
-    let mut parser = Parser::new(lexer);
-    let ast = parser.parse()?;
-
-    let mut compiler = Compiler::new();
-    compiler.constants = heap;
-    compiler.symbol_table = symbol_table;
-
-    let byte_code = compiler.compile(&ast).map_err(|error| vec![error])?;
-    let mut vm = VirtualMachine::new(byte_code);
-    vm.globals = globals;
-
-    vm.run().map_err(|error| vec![error])?;
-    vm.top()
-        .map(|obj| {
-            (
-                obj.clone(),
-                vm.heap.clone(),
-                compiler.symbol_table.clone(),
-                vm.globals.clone(),
-            )
-        })
-        .map_err(|error| vec![error])
-}
-
-pub fn repl(runtime: Runtime) -> io::Result<()> {
+pub fn interpret() -> io::Result<()> {
     let mut buffer = String::new();
-
     let env = Rc::new(RefCell::new(Environment::empty()));
-
-    let mut heap = vec![
-        vm::Object::unit(),
-        vm::Object::boolean(false),
-        vm::Object::boolean(true),
-    ];
-    let mut symbol_table = SymbolTable::new();
-    let mut globals = vec![];
 
     println!("{}", CMDS);
 
@@ -97,33 +42,95 @@ pub fn repl(runtime: Runtime) -> io::Result<()> {
             CLEAR => env.borrow_mut().clear(),
             ENV => println!("{}", env.borrow()),
             line => {
-                match runtime {
-                    Runtime::Interpreter => match interpret(env.clone(), line) {
-                        Ok(obj) => {
-                            println!("{}", obj);
-                        }
-                        Err(errors) => {
-                            println!("{}", errors.iter().join(", "));
-                        }
+                let lexer = Lexer::new(line.as_bytes());
+                let mut parser = Parser::new(lexer);
+                match parser.parse() {
+                    Ok(ast) => match eval_program(env.clone(), ast) {
+                        Ok(obj) => println!("{}", obj),
+                        Err(err) => println!("{}", err),
                     },
-                    Runtime::VirtualMachine => {
-                        match compile_run(heap.clone(), symbol_table.clone(), globals.clone(), line)
-                        {
-                            Ok((obj, h, s, g)) => {
-                                heap = h;
-                                symbol_table = s;
-                                globals = g;
-                                println!("{}", obj);
-                            }
-                            Err(errors) => {
-                                println!("{}", errors.iter().join(", "));
-                            }
-                        }
-                    }
-                };
+                    Err(err) => println!("{}", err.iter().join("\n")),
+                }
             }
         }
 
         buffer.clear();
+    }
+}
+
+fn compile_run() -> io::Result<()> {
+    let mut buffer = String::new();
+
+    let mut symbol_table = SymbolTable::new();
+    let mut globals = vec![0; 16];
+    let mut heap = vec![
+        vm::Object::unit(),
+        vm::Object::boolean(false),
+        vm::Object::boolean(true),
+    ];
+
+    println!("{}", CMDS);
+
+    loop {
+        print!("{}", PROMPT);
+        io::stdout().flush()?;
+
+        let _ = io::stdin().read_line(&mut buffer)?;
+
+        match buffer.trim() {
+            QUIT => return Ok(()),
+            CLEAR => {
+                symbol_table = SymbolTable::new();
+                globals = vec![0; 16];
+                heap = vec![
+                    vm::Object::unit(),
+                    vm::Object::boolean(false),
+                    vm::Object::boolean(true),
+                ];
+            }
+            ENV => println!(
+                "{}\n[{}]\n[{}]",
+                symbol_table,
+                globals.iter().join(", "),
+                heap.iter().join(", ")
+            ),
+            line => {
+                let lexer = Lexer::new(line.as_bytes());
+                let mut parser = Parser::new(lexer);
+                match parser.parse() {
+                    Ok(ast) => {
+                        let mut compiler = Compiler::new();
+                        compiler.constants = heap.clone();
+                        compiler.symbol_table = symbol_table.clone();
+                        match compiler.compile(&ast) {
+                            Ok(byte_code) => {
+                                symbol_table = compiler.symbol_table.clone();
+                                let mut vm = VirtualMachine::new(byte_code);
+                                vm.globals = globals.clone();
+                                match vm.run().and_then(|_| vm.top()) {
+                                    Ok(obj) => {
+                                        globals = vm.globals.clone();
+                                        heap = vm.heap.clone();
+                                        println!("{}", obj)
+                                    }
+                                    Err(err) => println!("{}", err),
+                                }
+                            }
+                            Err(err) => println!("{}", err),
+                        }
+                    }
+                    Err(err) => println!("{}", err.iter().join("\n")),
+                }
+            }
+        }
+
+        buffer.clear();
+    }
+}
+
+pub fn repl(runtime: Runtime) -> io::Result<()> {
+    match runtime {
+        Runtime::Interpreter => interpret(),
+        Runtime::VirtualMachine => compile_run(),
     }
 }

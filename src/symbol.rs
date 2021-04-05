@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope {
@@ -37,6 +38,12 @@ impl SymbolTable {
 
     pub fn resolve(&self, name: &str) -> Option<&Symbol> {
         self.store.get(name)
+    }
+}
+
+impl fmt::Display for SymbolTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.store)
     }
 }
 
