@@ -39,11 +39,10 @@ pub enum Op {
     GetGlobal(Binding),
     SetGlobal(Binding),
 
-    // Array
+    // Composite Data Types
     Array(N),
-
-    // Map
     Map(N),
+    Index,
 }
 
 #[rustfmt::skip]
@@ -75,8 +74,8 @@ impl Op {
     pub const SETGLOBAL: u8 = 18;
 
     pub const ARRAY    : u8 = 19;
-
     pub const MAP      : u8 = 20;
+    pub const INDEX    : u8 = 21;
 
     pub fn format(op: u8) -> String {
         match op {
@@ -111,7 +110,7 @@ impl fmt::Display for Op {
         match self {
             Op::Constant(reference) => write!(f, "Constant {}", reference),
             Op::Pop => write!(f, "Pop"),
-            Op::Unit => write!(f, "Unit"),
+            Op::Unit => write!(f, "unit"),
             Op::False => write!(f, "false"),
             Op::True => write!(f, "true"),
             Op::Add => write!(f, "+"),
@@ -130,6 +129,7 @@ impl fmt::Display for Op {
             Op::SetGlobal(binding) => write!(f, "SetGlobal {}", binding),
             Op::Array(n) => write!(f, "Array[{}]", n),
             Op::Map(n) => write!(f, "Map[{}]", n),
+            Op::Index => write!(f, "Index"),
         }
     }
 }

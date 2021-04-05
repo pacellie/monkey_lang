@@ -112,7 +112,9 @@ impl Compiler {
                 match operator {
                     Token::Minus => self.emit(Op::Minus),
                     Token::Bang => self.emit(Op::Bang),
-                    _ => panic!(),
+                    _ => {
+                        return Err(MonkeyError::type_mismatch(format!("{}{}", operator, expr)));
+                    }
                 };
             }
             Expression::Infix {
@@ -131,7 +133,12 @@ impl Compiler {
                     Token::Neq => self.emit(Op::Neq),
                     Token::Lt => self.emit(Op::Lt),
                     Token::Gt => self.emit(Op::Gt),
-                    _ => panic!(),
+                    _ => {
+                        return Err(MonkeyError::type_mismatch(format!(
+                            "{} {} {}",
+                            left, operator, right
+                        )));
+                    }
                 };
             }
             Expression::If { cond, yes, no } => {
@@ -151,6 +158,11 @@ impl Compiler {
                 };
 
                 self.patch(jump);
+            }
+            Expression::Index { expr, index } => {
+                self.compile_expr(expr)?;
+                self.compile_expr(index)?;
+                self.emit(Op::Index);
             }
             _ => panic!(),
         }
@@ -229,6 +241,9 @@ impl Compiler {
             Op::Map(n) => {
                 self.bytes.push(Op::MAP);
                 self.bytes.extend_from_slice(&n.to_be_bytes());
+            }
+            Op::Index => {
+                self.bytes.push(Op::INDEX);
             }
         }
     }
@@ -322,6 +337,7 @@ mod tests {
                         ops.push(Op::Map(n));
                         i += 2;
                     }
+                    Op::INDEX => ops.push(Op::Index),
                     _ => {
                         return None;
                     }
@@ -687,6 +703,52 @@ mod tests {
             Object::integer(6),
         ] ;
         "map expression 03"
+    )]
+    #[test_case(
+        "[1, 2, 3][1 + 1]",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Constant(5),
+            Op::Array(3),
+            Op::Constant(6),
+            Op::Constant(7),
+            Op::Add,
+            Op::Index,
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(1),
+            Object::integer(1),
+        ] ;
+        "index expression 01"
+    )]
+    #[test_case(
+        "{1: 2}[2 - 1]",
+        vec![
+            Op::Constant(3),
+            Op::Constant(4),
+            Op::Map(1),
+            Op::Constant(5),
+            Op::Constant(6),
+            Op::Sub,
+            Op::Index,
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(2),
+            Object::integer(1),
+        ] ;
+        "index expression 02"
     )]
     #[test_case(
         "if (true) { 10 }; 20;",

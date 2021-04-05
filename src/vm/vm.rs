@@ -2,6 +2,8 @@ use crate::compiler::{ByteCode, Op, Reference};
 use crate::error::{MonkeyError, Result};
 use crate::vm::{Object, Primitive};
 
+use std::collections::HashMap;
+
 const STACK_SIZE: usize = 2048;
 const GLOBALS_SIZE: usize = 65536;
 
@@ -16,7 +18,6 @@ pub struct VirtualMachine {
     pub stack: Vec<Reference>,
     pub sp: usize,
     pub pc: usize,
-    pub gp: usize,
 }
 
 impl VirtualMachine {
@@ -28,102 +29,30 @@ impl VirtualMachine {
             stack: vec![0; STACK_SIZE],
             sp: 0,
             pc: 0,
-            gp: 0,
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
         while self.pc < self.bytes.len() {
             match self.bytes[self.pc] {
-                Op::CONSTANT => {
-                    let reference = self.u16();
-                    self.push(reference)?;
-                    self.pc += 2;
-                }
+                Op::CONSTANT => self.constant()?,
                 Op::POP => {
                     self.pop();
                 }
-                Op::UNIT => {
-                    self.push(UNIT)?;
-                }
-                Op::FALSE => {
-                    self.push(FALSE)?;
-                }
-                Op::TRUE => {
-                    self.push(TRUE)?;
-                }
+                Op::UNIT => self.push(UNIT)?,
+                Op::FALSE => self.push(FALSE)?,
+                Op::TRUE => self.push(TRUE)?,
                 Op::ADD | Op::SUB | Op::MUL | Op::DIV | Op::EQ | Op::NEQ | Op::LT | Op::GT => {
-                    self.execute_bin_op(self.bytes[self.pc])?;
+                    self.bin_op(self.bytes[self.pc])?
                 }
-                Op::MINUS | Op::BANG => {
-                    self.execute_un_op(self.bytes[self.pc])?;
-                }
-                Op::JUMPIFNOT => {
-                    let reference = self.pop();
-
-                    match reference {
-                        FALSE => {
-                            let address = self.u16();
-                            self.pc = address as usize;
-                            self.pc -= 1;
-                        }
-                        TRUE => {
-                            self.pc += 2;
-                        }
-                        reference => {
-                            return Err(MonkeyError::type_mismatch(format!(
-                                "if ({}) {{...}}",
-                                self.dereference(reference)?
-                            )));
-                        }
-                    }
-                }
-                Op::JUMP => {
-                    let address = self.u16();
-                    self.pc = address as usize;
-                    self.pc -= 1;
-                }
-                Op::SETGLOBAL => {
-                    let index = self.u16() as usize;
-                    self.gp = self.gp.max(index);
-                    let reference = self.pop();
-                    self.globals[index] = reference;
-                    self.pc += 2;
-                }
-                Op::GETGLOBAL => {
-                    let index = self.u16() as usize;
-                    let reference = self.globals[index];
-                    self.push(reference)?;
-                    self.pc += 2;
-                }
-                Op::ARRAY => {
-                    let n = self.u16() as usize;
-                    self.pc += 2;
-
-                    let references = &self.stack[self.sp - n..self.sp];
-                    self.sp = self.sp - n;
-                    let obj = Object::Array(references.to_vec());
-
-                    let reference = self.reference(obj);
-                    self.push(reference)?;
-                }
-                Op::MAP => {
-                    let n = self.u16() as usize;
-                    self.pc += 2;
-
-                    let references = &self.stack[self.sp - 2 * n..self.sp];
-                    self.sp = self.sp - 2 * n;
-
-                    let pairs: Vec<(u16, u16)> = references
-                        .chunks(2)
-                        .into_iter()
-                        .map(|chunk| (chunk[0], chunk[1]))
-                        .collect();
-                    let obj = Object::map(&pairs);
-
-                    let reference = self.reference(obj);
-                    self.push(reference)?;
-                }
+                Op::MINUS | Op::BANG => self.un_op(self.bytes[self.pc])?,
+                Op::JUMPIFNOT => self.jump_if_not()?,
+                Op::JUMP => self.jump(),
+                Op::SETGLOBAL => self.set_global(),
+                Op::GETGLOBAL => self.get_global()?,
+                Op::ARRAY => self.array()?,
+                Op::MAP => self.map()?,
+                Op::INDEX => self.index()?,
                 _ => {
                     return Err(MonkeyError::RuntimeError(
                         "invalid bytecode format.".to_string(),
@@ -137,7 +66,15 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn execute_bin_op(&mut self, op: u8) -> Result<()> {
+    fn constant(&mut self) -> Result<()> {
+        let reference = self.u16();
+        self.push(reference)?;
+        self.pc += 2;
+
+        Ok(())
+    }
+
+    fn bin_op(&mut self, op: u8) -> Result<()> {
         let right = self.pop();
         let left = self.pop();
 
@@ -200,7 +137,7 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn execute_un_op(&mut self, op: u8) -> Result<()> {
+    fn un_op(&mut self, op: u8) -> Result<()> {
         let reference = self.pop();
 
         #[rustfmt::skip]
@@ -217,12 +154,122 @@ impl VirtualMachine {
                     }
                     (op, obj) => {
                         return Err(MonkeyError::type_mismatch(format!(
-                            "{} {}",
+                            "{}{}",
                             Op::format(op),
                             obj
                         )))
                     }
                 }
+            }
+        };
+
+        self.push(reference)
+    }
+
+    fn jump_if_not(&mut self) -> Result<()> {
+        let reference = self.pop();
+
+        match reference {
+            FALSE => {
+                let address = self.u16();
+                self.pc = address as usize;
+                self.pc -= 1;
+            }
+            TRUE => {
+                self.pc += 2;
+            }
+            reference => {
+                return Err(MonkeyError::type_mismatch(format!(
+                    "if ({}) {{...}}",
+                    self.dereference(reference)?
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn jump(&mut self) {
+        let address = self.u16();
+        self.pc = address as usize;
+        self.pc -= 1;
+    }
+
+    fn set_global(&mut self) {
+        let index = self.u16() as usize;
+        let reference = self.pop();
+        self.globals[index] = reference;
+        self.pc += 2;
+    }
+
+    fn get_global(&mut self) -> Result<()> {
+        let index = self.u16() as usize;
+        let reference = self.globals[index];
+        self.push(reference)?;
+
+        self.pc += 2;
+        Ok(())
+    }
+
+    fn array(&mut self) -> Result<()> {
+        let n = self.u16() as usize;
+
+        let references = &self.stack[self.sp - n..self.sp];
+        self.sp = self.sp - n;
+        let obj = Object::Array(references.to_vec());
+
+        let reference = self.reference(obj);
+
+        self.pc += 2;
+        self.push(reference)
+    }
+
+    fn map(&mut self) -> Result<()> {
+        let n = self.u16() as usize;
+
+        let references = &self.stack[self.sp - 2 * n..self.sp];
+        self.sp = self.sp - 2 * n;
+
+        let mut hm = HashMap::new();
+        for pair in references.chunks(2) {
+            match self.dereference(pair[0])? {
+                Object::Primitive(p) => {
+                    hm.insert(p.clone(), pair[1]);
+                }
+                obj => return Err(MonkeyError::type_mismatch(format!("{{{}: ... }}", obj))),
+            }
+        }
+
+        let reference = self.reference(Object::Map(hm));
+
+        self.pc += 2;
+        self.push(reference)
+    }
+
+    fn index(&mut self) -> Result<()> {
+        let index = self.pop();
+        let indexable = self.pop();
+
+        let index = self.dereference(index)?;
+        let indexable = self.dereference(indexable)?;
+
+        let reference = match (indexable, index) {
+            (Object::Array(vec), Object::Primitive(Primitive::Integer(i))) => {
+                if 0 <= *i && (*i as usize) < vec.len() {
+                    vec[*i as usize]
+                } else {
+                    return Err(MonkeyError::index_out_of_bounds(*i, vec.len() - 1));
+                }
+            }
+            (Object::Map(map), Object::Primitive(key)) => match map.get(key) {
+                Some(value) => *value,
+                None => return Err(MonkeyError::missing_index(format!("{}", key))),
+            },
+            (indexable, index) => {
+                return Err(MonkeyError::type_mismatch(format!(
+                    "{}[{}]",
+                    indexable, index
+                )))
             }
         };
 
@@ -281,9 +328,8 @@ mod tests {
 
     #[test_case(
         "1",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -294,9 +340,8 @@ mod tests {
     )]
     #[test_case(
         "2",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -307,9 +352,8 @@ mod tests {
     )]
     #[test_case(
         "1 + 2",
-        1,
         vec![5],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -322,9 +366,8 @@ mod tests {
     )]
     #[test_case(
         "1 - 2",
-        1,
         vec![5],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -337,9 +380,8 @@ mod tests {
     )]
     #[test_case(
         "1 * 2",
-        1,
         vec![5],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -352,9 +394,8 @@ mod tests {
     )]
     #[test_case(
         "4 / 2",
-        1,
         vec![5],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -367,9 +408,8 @@ mod tests {
     )]
     #[test_case(
         "50 / 2 * 2 + 10 - 5",
-        1,
         vec![11],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -388,9 +428,8 @@ mod tests {
     )]
     #[test_case(
         "5 + 5 + 5 + 5 - 10",
-        1,
         vec![11],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -409,9 +448,8 @@ mod tests {
     )]
     #[test_case(
         "2 * 2 * 2 * 2 * 2",
-        1,
         vec![11],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -430,9 +468,8 @@ mod tests {
     )]
     #[test_case(
         "5 * 2 + 10",
-        1,
         vec![7],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -447,9 +484,8 @@ mod tests {
     )]
     #[test_case(
         "5 + 2 * 10",
-        1,
         vec![7],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -464,9 +500,8 @@ mod tests {
     )]
     #[test_case(
         "5 * (2 + 10)",
-        1,
         vec![7],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -481,9 +516,8 @@ mod tests {
     )]
     #[test_case(
         "-5",
-        1,
         vec![4],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -495,9 +529,8 @@ mod tests {
     )]
     #[test_case(
         "-50 + 100 + -50",
-        1,
         vec![9],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -514,9 +547,8 @@ mod tests {
     )]
     #[test_case(
         "(5 + 10 * 2 + 15 / 3) * 2 + -10",
-        1,
         vec![16],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -540,9 +572,8 @@ mod tests {
     )]
     #[test_case(
         "false",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -552,9 +583,8 @@ mod tests {
     )]
     #[test_case(
         "true",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -564,9 +594,8 @@ mod tests {
     )]
     #[test_case(
         "1 == 1",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -578,9 +607,8 @@ mod tests {
     )]
     #[test_case(
         "1 != 1",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -592,9 +620,8 @@ mod tests {
     )]
     #[test_case(
         "1 == 2",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -606,9 +633,8 @@ mod tests {
     )]
     #[test_case(
         "1 != 2",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -620,9 +646,8 @@ mod tests {
     )]
     #[test_case(
         "1 < 2",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -634,9 +659,8 @@ mod tests {
     )]
     #[test_case(
         "1 > 2",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -648,9 +672,8 @@ mod tests {
     )]
     #[test_case(
         "1 < 1",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -662,9 +685,8 @@ mod tests {
     )]
     #[test_case(
         "1 > 1",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -676,9 +698,8 @@ mod tests {
     )]
     #[test_case(
         "true == true",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -688,9 +709,8 @@ mod tests {
     )]
     #[test_case(
         "false == false",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -700,9 +720,8 @@ mod tests {
     )]
     #[test_case(
         "true != false",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -712,9 +731,8 @@ mod tests {
     )]
     #[test_case(
         "false != true",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -724,9 +742,8 @@ mod tests {
     )]
     #[test_case(
         "!true",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -736,9 +753,8 @@ mod tests {
     )]
     #[test_case(
         "!false",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -748,9 +764,8 @@ mod tests {
     )]
     #[test_case(
         "!!true",
-        1,
         vec![2],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -760,9 +775,8 @@ mod tests {
     )]
     #[test_case(
         "!!false",
-        1,
         vec![1],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -772,9 +786,8 @@ mod tests {
     )]
     #[test_case(
         "\"monkey\"",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -785,9 +798,8 @@ mod tests {
     )]
     #[test_case(
         "\"mon\" + \"key\"",
-        1,
         vec![5],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -800,9 +812,8 @@ mod tests {
     )]
     #[test_case(
         "\"mon\" + \"key\" + \"banana\"",
-        1,
         vec![7],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -817,9 +828,8 @@ mod tests {
     )]
     #[test_case(
         "[]",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -830,9 +840,8 @@ mod tests {
     )]
     #[test_case(
         "[1, 2, 3]",
-        1,
         vec![6],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -846,9 +855,8 @@ mod tests {
     )]
     #[test_case(
         "[1 + 2, 3 * 4, 5 + 6]",
-        1,
         vec![12],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -868,9 +876,8 @@ mod tests {
     )]
     #[test_case(
         "{}",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -881,9 +888,8 @@ mod tests {
     )]
     #[test_case(
         "{1: 2, 3: 4}",
-        1,
         vec![7],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -892,15 +898,17 @@ mod tests {
             Object::integer(2),
             Object::integer(3),
             Object::integer(4),
-            Object::map(&[(3, 4), (5, 6)]),
+            Object::map(&[
+                (Primitive::Integer(1), 4),
+                (Primitive::Integer(3), 6)
+            ]),
         ] ;
         "map expression 02"
     )]
     #[test_case(
         "{1 + 1: 2 * 2, 3 + 3: 4 * 4}",
-        1,
         vec![15],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -917,15 +925,109 @@ mod tests {
             Object::integer(4),
             Object::integer(6),
             Object::integer(16),
-            Object::map(&[(11, 12), (13, 14)]),
+            Object::map(&[
+                (Primitive::Integer(2), 12),
+                (Primitive::Integer(6), 14),
+            ]),
         ] ;
         "map expression 03"
     )]
     #[test_case(
-        "if (true) { 10 }",
-        1,
+        "[1, 2, 3][1]",
+        vec![4],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(1),
+            Object::array(&[3, 4, 5]),
+        ] ;
+        "index expression 01"
+    )]
+    #[test_case(
+        "[1, 2, 3][0 + 2]",
+        vec![5],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(0),
+            Object::integer(2),
+            Object::array(&[3, 4, 5]),
+            Object::integer(2),
+        ] ;
+        "index expression 02"
+    )]
+    #[test_case(
+        "[[1, 1, 1]][0][0]",
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(1),
+            Object::integer(1),
+            Object::integer(0),
+            Object::integer(0),
+            Object::array(&[3, 4, 5]),
+            Object::array(&[8]),
+        ] ;
+        "index expression 03"
+    )]
+    #[test_case(
+        "{1: 1, 2: 2}[1]",
+        vec![4],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(2),
+            Object::integer(1),
+            Object::map(&[
+                (Primitive::Integer(1), 4),
+                (Primitive::Integer(2), 6),
+            ]),
+        ] ;
+        "index expression 04"
+    )]
+    #[test_case(
+        "{1: 1, 2: 2}[2]",
+        vec![6],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(2),
+            Object::integer(2),
+            Object::map(&[
+                (Primitive::Integer(1), 4),
+                (Primitive::Integer(2), 6),
+            ]),
+        ] ;
+        "index expression 05"
+    )]
+    #[test_case(
+        "if (true) { 10 }",
+        vec![3],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -936,9 +1038,8 @@ mod tests {
     )]
     #[test_case(
         "if (true) { 10 } else { 20 }",
-        1,
         vec![3],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -950,9 +1051,8 @@ mod tests {
     )]
     #[test_case(
         "if (false) { 10 } else { 20 }",
-        1,
         vec![4],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -964,9 +1064,8 @@ mod tests {
     )]
     #[test_case(
         "if (false) { 10 }",
-        1,
         vec![0],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -977,9 +1076,8 @@ mod tests {
     )]
     #[test_case(
         "1; 2",
-        1,
         vec![4],
-        vec![0],
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -991,9 +1089,8 @@ mod tests {
     )]
     #[test_case(
         "let one = 1; one",
-        1,
         vec![3],
-        vec![3],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -1004,9 +1101,8 @@ mod tests {
     )]
     #[test_case(
         "let one = 1; let two = 2; one + two",
-        1,
         vec![5],
-        vec![3, 4],
+        vec![3, 4, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -1019,9 +1115,8 @@ mod tests {
     )]
     #[test_case(
         "let one = 1; let two = one + one; one + two",
-        1,
         vec![5],
-        vec![3, 4],
+        vec![3, 4, 0, 0, 0, 0, 0, 0, 0, 0],
         vec![
             Object::unit(),
             Object::boolean(false),
@@ -1032,13 +1127,7 @@ mod tests {
         ] ;
         "global let stmt 03"
     )]
-    fn test(
-        input: &str,
-        sp: usize,
-        stack: Vec<Reference>,
-        globals: Vec<Reference>,
-        heap: Vec<Object>,
-    ) {
+    fn test(input: &str, stack: Vec<Reference>, globals: Vec<Reference>, heap: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);
         let ast = parser.parse().unwrap();
@@ -1048,9 +1137,33 @@ mod tests {
 
         vm.run().unwrap();
 
-        assert_eq!(vm.sp, sp);
         assert_eq!(vm.stack[..vm.sp], stack[..]);
-        assert_eq!(vm.globals[..vm.gp + 1], globals[..]);
+        assert_eq!(vm.globals[0..10], globals[..]);
         assert_eq!(vm.heap, heap)
+    }
+
+    #[test_case("5 + true"              , MonkeyError::type_mismatch("5 + true")        ; "error 01")]
+    #[test_case("5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")        ; "error 02")]
+    #[test_case("-true"                 , MonkeyError::type_mismatch("-true")           ; "error 03")]
+    #[test_case("!5"                    , MonkeyError::type_mismatch("!5")              ; "error 04")]
+    #[test_case("5; true + false; 5"    , MonkeyError::type_mismatch("true + false")    ; "error 05")]
+    #[test_case("if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")    ; "error 06")]
+    // #[test_case("len(1)"                , MonkeyError::type_mismatch("len(1)")          ; "error 07")]
+    // #[test_case("len(\"one\", \"two\")" , MonkeyError::wrong_number_of_args(1, 2)       ; "error 08")]
+    #[test_case("[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)        ; "error 09")]
+    #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)       ; "error 10")]
+    #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")         ; "error 11")]
+    #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")         ; "error 12")]
+    // #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[fn(x) { x }]") ; "error 13")]
+    fn test_error(input: &str, expected: MonkeyError) {
+        let lexer = Lexer::new(input.as_bytes());
+        let mut parser = Parser::new(lexer);
+        let ast = parser.parse().unwrap();
+        let mut compiler = Compiler::new();
+        let byte_code = compiler.compile(&ast).unwrap();
+        let mut vm = VirtualMachine::new(byte_code);
+        let error = vm.run().unwrap_err();
+
+        assert_eq!(error, expected)
     }
 }

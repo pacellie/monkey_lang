@@ -21,7 +21,7 @@ impl fmt::Display for Primitive {
             Primitive::False => write!(f, "false"),
             Primitive::True => write!(f, "true"),
             Primitive::Integer(i) => write!(f, "{}", i),
-            Primitive::String(s) => write!(f, "{}", s),
+            Primitive::String(s) => write!(f, "\"{}\"", s),
         }
     }
 }
@@ -30,7 +30,7 @@ impl fmt::Display for Primitive {
 pub enum Object {
     Primitive(Primitive),
     Array(Vec<Reference>),
-    Map(HashMap<Reference, Reference>),
+    Map(HashMap<Primitive, Reference>),
 }
 
 impl fmt::Display for Object {
@@ -73,10 +73,10 @@ impl Object {
         Object::Array(slice.to_vec())
     }
 
-    pub fn map(slice: &[(Reference, Reference)]) -> Object {
+    pub fn map(slice: &[(Primitive, Reference)]) -> Object {
         let mut hm = HashMap::new();
         for (key, value) in slice {
-            hm.insert(*key, *value);
+            hm.insert(key.clone(), *value);
         }
         Object::Map(hm)
     }
