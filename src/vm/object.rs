@@ -31,6 +31,7 @@ pub enum Object {
     Primitive(Primitive),
     Array(Vec<Reference>),
     Map(HashMap<Primitive, Reference>),
+    Function(Vec<u8>),
 }
 
 impl fmt::Display for Object {
@@ -45,6 +46,7 @@ impl fmt::Display for Object {
                     .map(|(key, value)| { format!("{}: {}", key, value) })
                     .join(", ")
             ),
+            Object::Function(_) => write!(f, "function"),
         }
     }
 }

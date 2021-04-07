@@ -62,7 +62,7 @@ fn compile_run() -> io::Result<()> {
     let mut buffer = String::new();
 
     let mut symbol_table = SymbolTable::new();
-    let mut globals = vec![0; 16];
+    let mut globals = vec![0; 128];
     let mut heap = vec![
         vm::Object::unit(),
         vm::Object::boolean(false),
@@ -81,7 +81,7 @@ fn compile_run() -> io::Result<()> {
             QUIT => return Ok(()),
             CLEAR => {
                 symbol_table = SymbolTable::new();
-                globals = vec![0; 16];
+                globals = vec![0; 128];
                 heap = vec![
                     vm::Object::unit(),
                     vm::Object::boolean(false),
@@ -91,7 +91,7 @@ fn compile_run() -> io::Result<()> {
             ENV => println!(
                 "{}\n[{}]\n[{}]",
                 symbol_table,
-                globals.iter().join(", "),
+                globals.iter().take_while(|global| **global != 0).join(", "),
                 heap.iter().join(", ")
             ),
             line => {

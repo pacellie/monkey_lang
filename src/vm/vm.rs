@@ -4,37 +4,125 @@ use crate::vm::{Object, Primitive};
 
 use std::collections::HashMap;
 
-const STACK_SIZE: usize = 2048;
-const GLOBALS_SIZE: usize = 65536;
+const STACK_SIZE: usize = 16;
+const GLOBALS_SIZE: usize = 16;
+const FRAMES_SIZE: usize = 16;
 
 const UNIT: u16 = 0;
 const FALSE: u16 = 1;
 const TRUE: u16 = 2;
 
+pub struct Frame {
+    bytes: Vec<u8>,
+    pc: i32,
+}
+
+impl Frame {
+    pub fn new(bytes: Vec<u8>) -> Frame {
+        Frame { bytes, pc: -1 }
+    }
+}
+
 pub struct VirtualMachine {
-    pub bytes: Vec<u8>,
     pub heap: Vec<Object>,
     pub globals: Vec<Reference>,
+    pub frames: Vec<Frame>,
+    pub fp: usize,
     pub stack: Vec<Reference>,
     pub sp: usize,
-    pub pc: usize,
 }
 
 impl VirtualMachine {
     pub fn new(byte_code: ByteCode) -> VirtualMachine {
+        let mut main_frame = Frame::new(byte_code.bytes);
+        main_frame.pc = 0;
+        let mut frames: Vec<_> = vec![0; FRAMES_SIZE]
+            .iter()
+            .map(|_| Frame::new(vec![]))
+            .collect();
+        frames[0] = main_frame;
+
         VirtualMachine {
-            bytes: byte_code.bytes,
             heap: byte_code.constants,
             globals: vec![0; GLOBALS_SIZE],
+            frames,
+            fp: 1,
             stack: vec![0; STACK_SIZE],
             sp: 0,
-            pc: 0,
         }
     }
 
+    fn frame(&self) -> &Frame {
+        &self.frames[self.fp - 1]
+    }
+
+    fn pc(&self) -> i32 {
+        self.frames[self.fp - 1].pc
+    }
+
+    fn pc_mut(&mut self) -> &mut i32 {
+        &mut self.frames[self.fp - 1].pc
+    }
+
+    fn push_frame(&mut self, frame: Frame) {
+        self.frames[self.fp] = frame;
+        self.fp += 1;
+    }
+
+    fn pop_frame(&mut self) -> &Frame {
+        self.fp -= 1;
+        &self.frames[self.fp]
+    }
+
+    fn read_u16(&self) -> u16 {
+        u16::from_be_bytes([
+            self.frame().bytes[(self.pc() + 1) as usize],
+            self.frame().bytes[(self.pc() + 2) as usize],
+        ])
+    }
+
+    fn reference(&mut self, obj: Object) -> Reference {
+        self.heap.push(obj);
+        (self.heap.len() - 1) as u16
+    }
+
+    fn dereference(&self, reference: Reference) -> Result<&Object> {
+        if reference as usize >= self.heap.len() {
+            Err(MonkeyError::RuntimeError("invalid heap access".to_string()))
+        } else {
+            Ok(&self.heap[reference as usize])
+        }
+    }
+
+    fn push(&mut self, reference: Reference) -> Result<()> {
+        if self.sp >= STACK_SIZE {
+            Err(MonkeyError::RuntimeError("stack overflow".to_string()))
+        } else {
+            self.stack[self.sp] = reference;
+            self.sp += 1;
+            Ok(())
+        }
+    }
+
+    fn pop(&mut self) -> Reference {
+        if self.sp > 0 {
+            self.sp -= 1;
+        }
+        self.stack[self.sp]
+    }
+
+    pub fn top(&self) -> Result<&Object> {
+        let p = if self.sp > 0 { self.sp - 1 } else { 0 };
+        self.dereference(self.stack[p])
+    }
+
     pub fn run(&mut self) -> Result<()> {
-        while self.pc < self.bytes.len() {
-            match self.bytes[self.pc] {
+        while self.pc() < self.frame().bytes.len() as i32 {
+            let op = self.frame().bytes[self.pc() as usize];
+
+            print!("{} ", Op::format(op));
+
+            match op {
                 Op::CONSTANT => self.constant()?,
                 Op::POP => {
                     self.pop();
@@ -43,9 +131,9 @@ impl VirtualMachine {
                 Op::FALSE => self.push(FALSE)?,
                 Op::TRUE => self.push(TRUE)?,
                 Op::ADD | Op::SUB | Op::MUL | Op::DIV | Op::EQ | Op::NEQ | Op::LT | Op::GT => {
-                    self.bin_op(self.bytes[self.pc])?
+                    self.bin_op(self.frame().bytes[self.pc() as usize])?
                 }
-                Op::MINUS | Op::BANG => self.un_op(self.bytes[self.pc])?,
+                Op::MINUS | Op::BANG => self.un_op(self.frame().bytes[self.pc() as usize])?,
                 Op::JUMPIFNOT => self.jump_if_not()?,
                 Op::JUMP => self.jump(),
                 Op::SETGLOBAL => self.set_global(),
@@ -53,6 +141,8 @@ impl VirtualMachine {
                 Op::ARRAY => self.array()?,
                 Op::MAP => self.map()?,
                 Op::INDEX => self.index()?,
+                Op::CALL => self.call()?,
+                Op::RETURN => self.ret()?,
                 _ => {
                     return Err(MonkeyError::RuntimeError(
                         "invalid bytecode format.".to_string(),
@@ -60,16 +150,18 @@ impl VirtualMachine {
                 }
             }
 
-            self.pc += 1;
+            println!("{:?}", self.stack);
+
+            *self.pc_mut() += 1;
         }
 
         Ok(())
     }
 
     fn constant(&mut self) -> Result<()> {
-        let reference = self.u16();
+        let reference = self.read_u16();
         self.push(reference)?;
-        self.pc += 2;
+        *self.pc_mut() += 2;
 
         Ok(())
     }
@@ -171,12 +263,12 @@ impl VirtualMachine {
 
         match reference {
             FALSE => {
-                let address = self.u16();
-                self.pc = address as usize;
-                self.pc -= 1;
+                let address = self.read_u16();
+                *self.pc_mut() = address as i32;
+                *self.pc_mut() -= 1;
             }
             TRUE => {
-                self.pc += 2;
+                *self.pc_mut() += 2;
             }
             reference => {
                 return Err(MonkeyError::type_mismatch(format!(
@@ -190,29 +282,29 @@ impl VirtualMachine {
     }
 
     fn jump(&mut self) {
-        let address = self.u16();
-        self.pc = address as usize;
-        self.pc -= 1;
+        let address = self.read_u16();
+        *self.pc_mut() = address as i32;
+        *self.pc_mut() -= 1;
     }
 
     fn set_global(&mut self) {
-        let index = self.u16() as usize;
+        let index = self.read_u16() as usize;
         let reference = self.pop();
         self.globals[index] = reference;
-        self.pc += 2;
+        *self.pc_mut() += 2;
     }
 
     fn get_global(&mut self) -> Result<()> {
-        let index = self.u16() as usize;
+        let index = self.read_u16() as usize;
         let reference = self.globals[index];
         self.push(reference)?;
 
-        self.pc += 2;
+        *self.pc_mut() += 2;
         Ok(())
     }
 
     fn array(&mut self) -> Result<()> {
-        let n = self.u16() as usize;
+        let n = self.read_u16() as usize;
 
         let references = &self.stack[self.sp - n..self.sp];
         self.sp = self.sp - n;
@@ -220,12 +312,12 @@ impl VirtualMachine {
 
         let reference = self.reference(obj);
 
-        self.pc += 2;
+        *self.pc_mut() += 2;
         self.push(reference)
     }
 
     fn map(&mut self) -> Result<()> {
-        let n = self.u16() as usize;
+        let n = self.read_u16() as usize;
 
         let references = &self.stack[self.sp - 2 * n..self.sp];
         self.sp = self.sp - 2 * n;
@@ -242,7 +334,7 @@ impl VirtualMachine {
 
         let reference = self.reference(Object::Map(hm));
 
-        self.pc += 2;
+        *self.pc_mut() += 2;
         self.push(reference)
     }
 
@@ -276,43 +368,27 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn u16(&self) -> u16 {
-        u16::from_be_bytes([self.bytes[self.pc + 1], self.bytes[self.pc + 2]])
-    }
+    fn call(&mut self) -> Result<()> {
+        let reference = self.stack[self.sp - 1];
+        let obj = self.dereference(reference)?;
 
-    fn reference(&mut self, obj: Object) -> Reference {
-        self.heap.push(obj);
-        (self.heap.len() - 1) as u16
-    }
-
-    fn dereference(&self, reference: Reference) -> Result<&Object> {
-        if reference as usize >= self.heap.len() {
-            Err(MonkeyError::RuntimeError("invalid heap access".to_string()))
+        if let Object::Function(bytes) = obj {
+            let frame = Frame::new(bytes.clone());
+            self.push_frame(frame);
         } else {
-            Ok(&self.heap[reference as usize])
+            return Err(MonkeyError::type_mismatch(format!("{}(...)", obj)));
         }
+
+        Ok(())
     }
 
-    fn push(&mut self, reference: Reference) -> Result<()> {
-        if self.sp >= STACK_SIZE {
-            Err(MonkeyError::RuntimeError("stack overflow".to_string()))
-        } else {
-            self.stack[self.sp] = reference;
-            self.sp += 1;
-            Ok(())
-        }
-    }
+    fn ret(&mut self) -> Result<()> {
+        let reference = self.pop();
 
-    fn pop(&mut self) -> Reference {
-        if self.sp > 0 {
-            self.sp -= 1;
-        }
-        self.stack[self.sp]
-    }
+        self.pop_frame();
+        self.pop();
 
-    pub fn top(&self) -> Result<&Object> {
-        let p = if self.sp > 0 { self.sp - 1 } else { 0 };
-        self.dereference(self.stack[p])
+        self.push(reference)
     }
 }
 
@@ -325,6 +401,16 @@ mod tests {
     use crate::parser::Parser;
 
     use test_case::test_case;
+
+    fn encode(ops: Vec<Op>) -> Vec<u8> {
+        let mut compiler = Compiler::new();
+
+        for op in ops {
+            compiler.encode(op);
+        }
+
+        compiler.scopes[0].bytes.clone()
+    }
 
     #[test_case(
         "1",
@@ -1126,6 +1212,175 @@ mod tests {
             Object::integer(3),
         ] ;
         "global let stmt 03"
+    )]
+    #[test_case(
+        "let f = fn() { 5 + 10 }; f()",
+        vec![6],
+        vec![5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(5),
+            Object::integer(10),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Constant(4),
+                Op::Add,
+                Op::Return,
+            ])),
+            Object::integer(15),
+        ] ;
+        "function call 01"
+    )]
+    #[test_case(
+        "let f = fn() { 1 }; let g = fn() { 2 }; f() + g()",
+        vec![7],
+        vec![4, 6, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::Constant(5),
+                Op::Return,
+            ])),
+            Object::integer(3),
+        ] ;
+        "function call 02"
+    )]
+    #[test_case(
+        "let f = fn() { 1 }; let g = fn() { f() + 2 }; let h = fn() { g() + 3 }; h()",
+        vec![10],
+        vec![4, 6, 8, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::GetGlobal(0),
+                Op::Call,
+                Op::Constant(5),
+                Op::Add,
+                Op::Return,
+            ])),
+            Object::integer(3),
+            Object::Function(encode(vec![
+                Op::GetGlobal(1),
+                Op::Call,
+                Op::Constant(7),
+                Op::Add,
+                Op::Return,
+            ])),
+            Object::integer(3),
+            Object::integer(6),
+        ] ;
+        "function call 03"
+    )]
+    #[test_case(
+        "let f = fn() { return 1; 2 }; f()",
+        vec![3],
+        vec![5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+                Op::Constant(4),
+                Op::Return,
+            ])),
+        ] ;
+        "function call 04"
+    )]
+    #[test_case(
+        "let f = fn() { return 1; return 2; }; f()",
+        vec![3],
+        vec![5, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+                Op::Constant(4),
+                Op::Return,
+            ])),
+        ] ;
+        "function call 05"
+    )]
+    #[test_case(
+        "let f = fn() { }; f()",
+        vec![0],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function(encode(vec![
+                Op::Constant(0),
+                Op::Return,
+            ])),
+        ] ;
+        "function call 06"
+    )]
+    #[test_case(
+        "let f = fn() { }; let g = fn() { f() }; g()",
+        vec![0],
+        vec![3, 4, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function(encode(vec![
+                Op::Constant(0),
+                Op::Return,
+            ])),
+            Object::Function(encode(vec![
+                Op::GetGlobal(0),
+                Op::Call,
+                Op::Return,
+            ])),
+        ] ;
+        "function call 07"
+    )]
+    #[test_case(
+        "let f = fn() { 1 }; let g = fn() { f }; g()()",
+        vec![3],
+        vec![4, 5, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+            Object::Function(encode(vec![
+                Op::GetGlobal(0),
+                Op::Return,
+            ])),
+        ] ;
+        "function call 08"
     )]
     fn test(input: &str, stack: Vec<Reference>, globals: Vec<Reference>, heap: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

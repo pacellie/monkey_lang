@@ -11,8 +11,13 @@ pub struct ByteCode {
     pub constants: Vec<Object>,
 }
 
+pub struct Scope {
+    pub bytes: Vec<u8>,
+}
+
 pub struct Compiler {
-    bytes: Vec<u8>,
+    pub scopes: Vec<Scope>,
+    pub scope: usize,
     pub constants: Vec<Object>,
     pub symbol_table: SymbolTable,
 }
@@ -20,7 +25,8 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Compiler {
         Compiler {
-            bytes: vec![],
+            scopes: vec![Scope { bytes: vec![] }],
+            scope: 0,
             constants: vec![
                 Object::unit(),
                 Object::boolean(false),
@@ -30,11 +36,43 @@ impl Compiler {
         }
     }
 
+    fn current_scope(&mut self) -> &mut Scope {
+        &mut self.scopes[self.scope]
+    }
+
+    fn enter_scope(&mut self) {
+        self.scopes.push(Scope { bytes: vec![] });
+        self.scope += 1;
+    }
+
+    fn leave_scope(&mut self) -> Vec<u8> {
+        self.scope -= 1;
+        self.scopes.pop().unwrap().bytes
+    }
+
+    fn emit(&mut self, op: Op) -> usize {
+        let index = self.current_scope().bytes.len();
+        self.encode(op);
+        index
+    }
+
+    fn allocate(&mut self, obj: Object) -> Reference {
+        let reference = self.constants.len() as u16;
+        self.constants.push(obj);
+        reference
+    }
+
+    fn patch(&mut self, index: usize) {
+        let [x, y] = (self.current_scope().bytes.len() as u16).to_be_bytes();
+        self.current_scope().bytes[index + 1] = x;
+        self.current_scope().bytes[index + 2] = y;
+    }
+
     pub fn compile(&mut self, ast: &Program) -> Result<ByteCode> {
         self.compile_block_stmt(ast)?;
 
         Ok(ByteCode {
-            bytes: self.bytes.clone(),
+            bytes: self.scopes[0].bytes.clone(),
             constants: self.constants.clone(),
         })
     }
@@ -54,12 +92,15 @@ impl Compiler {
                 let index = self.symbol_table.define(name).index;
                 self.emit(Op::SetGlobal(index));
             }
+            Statement::Return(expr) => {
+                self.compile_expr(expr)?;
+                self.emit(Op::Return);
+            }
             Statement::Stmt(expr) => {
                 self.compile_expr(expr)?;
                 self.emit(Op::Pop);
             }
             Statement::Expr(expr) => self.compile_expr(expr)?,
-            _ => panic!(),
         }
 
         Ok(())
@@ -159,6 +200,35 @@ impl Compiler {
 
                 self.patch(jump);
             }
+            Expression::Function { params, body } => {
+                self.enter_scope();
+
+                self.compile_block_stmt(body)?;
+
+                let mut bytes = self.leave_scope();
+
+                if bytes.len() == 0 {
+                    bytes.push(Op::CONSTANT);
+                    bytes.extend_from_slice(&0u16.to_be_bytes());
+                }
+
+                match bytes[bytes.len() - 1] {
+                    Op::RETURN => (),
+                    Op::POP => {
+                        *bytes.last_mut().unwrap() = Op::RETURN;
+                    }
+                    _ => {
+                        bytes.push(Op::RETURN);
+                    }
+                }
+
+                let reference = self.allocate(Object::Function(bytes));
+                self.emit(Op::Constant(reference));
+            }
+            Expression::Call { expr, args } => {
+                self.compile_expr(expr)?;
+                self.emit(Op::Call);
+            }
             Expression::Index { expr, index } => {
                 self.compile_expr(expr)?;
                 self.compile_expr(index)?;
@@ -170,100 +240,102 @@ impl Compiler {
         Ok(())
     }
 
-    fn encode(&mut self, op: Op) {
+    pub fn encode(&mut self, op: Op) {
         match op {
             Op::Constant(reference) => {
-                self.bytes.push(Op::CONSTANT);
-                self.bytes.extend_from_slice(&reference.to_be_bytes());
+                self.current_scope().bytes.push(Op::CONSTANT);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&reference.to_be_bytes());
             }
             Op::Pop => {
-                self.bytes.push(Op::POP);
+                self.current_scope().bytes.push(Op::POP);
             }
             Op::Unit => {
-                self.bytes.push(Op::UNIT);
+                self.current_scope().bytes.push(Op::UNIT);
             }
             Op::False => {
-                self.bytes.push(Op::FALSE);
+                self.current_scope().bytes.push(Op::FALSE);
             }
             Op::True => {
-                self.bytes.push(Op::TRUE);
+                self.current_scope().bytes.push(Op::TRUE);
             }
             Op::Add => {
-                self.bytes.push(Op::ADD);
+                self.current_scope().bytes.push(Op::ADD);
             }
             Op::Sub => {
-                self.bytes.push(Op::SUB);
+                self.current_scope().bytes.push(Op::SUB);
             }
             Op::Mul => {
-                self.bytes.push(Op::MUL);
+                self.current_scope().bytes.push(Op::MUL);
             }
             Op::Div => {
-                self.bytes.push(Op::DIV);
+                self.current_scope().bytes.push(Op::DIV);
             }
             Op::Eq => {
-                self.bytes.push(Op::EQ);
+                self.current_scope().bytes.push(Op::EQ);
             }
             Op::Neq => {
-                self.bytes.push(Op::NEQ);
+                self.current_scope().bytes.push(Op::NEQ);
             }
             Op::Lt => {
-                self.bytes.push(Op::LT);
+                self.current_scope().bytes.push(Op::LT);
             }
             Op::Gt => {
-                self.bytes.push(Op::GT);
+                self.current_scope().bytes.push(Op::GT);
             }
             Op::Minus => {
-                self.bytes.push(Op::MINUS);
+                self.current_scope().bytes.push(Op::MINUS);
             }
             Op::Bang => {
-                self.bytes.push(Op::BANG);
+                self.current_scope().bytes.push(Op::BANG);
             }
             Op::JumpIfNot(address) => {
-                self.bytes.push(Op::JUMPIFNOT);
-                self.bytes.extend_from_slice(&address.to_be_bytes());
+                self.current_scope().bytes.push(Op::JUMPIFNOT);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&address.to_be_bytes());
             }
             Op::Jump(address) => {
-                self.bytes.push(Op::JUMP);
-                self.bytes.extend_from_slice(&address.to_be_bytes());
+                self.current_scope().bytes.push(Op::JUMP);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&address.to_be_bytes());
             }
             Op::GetGlobal(binding) => {
-                self.bytes.push(Op::GETGLOBAL);
-                self.bytes.extend_from_slice(&binding.to_be_bytes());
+                self.current_scope().bytes.push(Op::GETGLOBAL);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&binding.to_be_bytes());
             }
             Op::SetGlobal(binding) => {
-                self.bytes.push(Op::SETGLOBAL);
-                self.bytes.extend_from_slice(&binding.to_be_bytes());
+                self.current_scope().bytes.push(Op::SETGLOBAL);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&binding.to_be_bytes());
             }
             Op::Array(n) => {
-                self.bytes.push(Op::ARRAY);
-                self.bytes.extend_from_slice(&n.to_be_bytes());
+                self.current_scope().bytes.push(Op::ARRAY);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&n.to_be_bytes());
             }
             Op::Map(n) => {
-                self.bytes.push(Op::MAP);
-                self.bytes.extend_from_slice(&n.to_be_bytes());
+                self.current_scope().bytes.push(Op::MAP);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&n.to_be_bytes());
             }
             Op::Index => {
-                self.bytes.push(Op::INDEX);
+                self.current_scope().bytes.push(Op::INDEX);
+            }
+            Op::Call => {
+                self.current_scope().bytes.push(Op::CALL);
+            }
+            Op::Return => {
+                self.current_scope().bytes.push(Op::RETURN);
             }
         }
-    }
-
-    fn emit(&mut self, op: Op) -> usize {
-        let index = self.bytes.len();
-        self.encode(op);
-        index
-    }
-
-    fn allocate(&mut self, obj: Object) -> Reference {
-        let reference = self.constants.len() as u16;
-        self.constants.push(obj);
-        reference
-    }
-
-    fn patch(&mut self, index: usize) {
-        let [x, y] = (self.bytes.len() as u16).to_be_bytes();
-        self.bytes[index + 1] = x;
-        self.bytes[index + 2] = y;
     }
 }
 
@@ -338,6 +410,8 @@ mod tests {
                         i += 2;
                     }
                     Op::INDEX => ops.push(Op::Index),
+                    Op::CALL => ops.push(Op::Call),
+                    Op::RETURN => ops.push(Op::Return),
                     _ => {
                         return None;
                     }
@@ -348,6 +422,16 @@ mod tests {
 
             Some(ops)
         }
+    }
+
+    fn encode(ops: Vec<Op>) -> Vec<u8> {
+        let mut compiler = Compiler::new();
+
+        for op in ops {
+            compiler.encode(op);
+        }
+
+        compiler.scopes[0].bytes.clone()
     }
 
     #[test_case(
@@ -847,7 +931,7 @@ mod tests {
             Object::integer(1),
             Object::integer(2)
         ] ;
-        "let stmt 01"
+        "global let stmt 01"
     )]
     #[test_case(
         "let one = 1; one;",
@@ -863,7 +947,7 @@ mod tests {
             Object::boolean(true),
             Object::integer(1)
         ] ;
-        "let stmt 02"
+        "global let stmt 02"
     )]
     #[test_case(
         "let one = 1; let two = one; two",
@@ -880,7 +964,151 @@ mod tests {
             Object::boolean(true),
             Object::integer(1)
         ] ;
-        "let stmt 03"
+        "global let stmt 03"
+    )]
+    #[test_case(
+        "fn() { return 5 + 10; }",
+        vec![
+            Op::Constant(5),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(5),
+            Object::integer(10),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Constant(4),
+                Op::Add,
+                Op::Return,
+            ])),
+        ] ;
+        "function literal 01"
+    )]
+    #[test_case(
+        "fn() { 5 + 10 }",
+        vec![
+            Op::Constant(5),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(5),
+            Object::integer(10),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Constant(4),
+                Op::Add,
+                Op::Return,
+            ])),
+        ] ;
+        "function literal 02"
+    )]
+    #[test_case(
+        "fn() { 5; 10 }",
+        vec![
+            Op::Constant(5),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(5),
+            Object::integer(10),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Pop,
+                Op::Constant(4),
+                Op::Return,
+            ])),
+        ] ;
+        "function literal 03"
+    )]
+    #[test_case(
+        "fn() { }",
+        vec![
+            Op::Constant(3),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function(encode(vec![
+                Op::Constant(0),
+                Op::Return,
+            ])),
+        ] ;
+        "function literal 04"
+    )]
+    #[test_case(
+        "fn() { 42 }()",
+        vec![
+            Op::Constant(4),
+            Op::Call,
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(42),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+        ] ;
+        "call expr 01"
+    )]
+    #[test_case(
+        "let f = fn() { 42 }; f()",
+        vec![
+            Op::Constant(4),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Call,
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(42),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+        ] ;
+        "call expr 02"
+    )]
+    #[test_case(
+        "let f = fn() { 1 }; let g = fn() { 2 }; f() + g()",
+        vec![
+            Op::Constant(4),
+            Op::SetGlobal(0),
+            Op::Constant(6),
+            Op::SetGlobal(1),
+            Op::GetGlobal(0),
+            Op::Call,
+            Op::GetGlobal(1),
+            Op::Call,
+            Op::Add,
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::Return,
+            ])),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::Constant(5),
+                Op::Return,
+            ])),
+        ] ;
+        "call expr 03"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

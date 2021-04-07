@@ -43,6 +43,10 @@ pub enum Op {
     Array(N),
     Map(N),
     Index,
+
+    // Functions
+    Call,
+    Return,
 }
 
 #[rustfmt::skip]
@@ -77,6 +81,9 @@ impl Op {
     pub const MAP      : u8 = 20;
     pub const INDEX    : u8 = 21;
 
+    pub const CALL     : u8 = 22;
+    pub const RETURN   : u8 = 23;
+
     pub fn format(op: u8) -> String {
         match op {
             Op::CONSTANT => "constant",
@@ -100,6 +107,8 @@ impl Op {
             Op::SETGLOBAL => "set_global",
             Op::ARRAY => "array",
             Op::MAP => "map",
+            Op::CALL => "call",
+            Op::RETURN => "return",
             _ => "?",
         }.to_string()
     }
@@ -130,6 +139,8 @@ impl fmt::Display for Op {
             Op::Array(n) => write!(f, "Array[{}]", n),
             Op::Map(n) => write!(f, "Map[{}]", n),
             Op::Index => write!(f, "Index"),
+            Op::Call => write!(f, "Call"),
+            Op::Return => write!(f, "Return"),
         }
     }
 }

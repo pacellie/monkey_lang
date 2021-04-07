@@ -9,7 +9,6 @@ pub enum Scope {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
-    name: String,
     scope: Scope,
     pub index: u16,
 }
@@ -28,7 +27,6 @@ impl SymbolTable {
 
     pub fn define(&mut self, name: &str) -> &Symbol {
         let symbol = Symbol {
-            name: name.to_string(),
             scope: Scope::Global,
             index: self.store.len() as u16,
         };
@@ -61,12 +59,10 @@ mod tests {
         let b1 = tbl.resolve("b");
 
         let a = Symbol {
-            name: "a".to_string(),
             scope: Scope::Global,
             index: 0,
         };
         let b = Symbol {
-            name: "b".to_string(),
             scope: Scope::Global,
             index: 1,
         };
