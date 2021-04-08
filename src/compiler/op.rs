@@ -2,7 +2,8 @@ use std::fmt;
 
 pub type Reference = u16;
 pub type Address = u16;
-pub type Binding = u16;
+pub type GlobalBinding = u16;
+pub type LocalBinding = u8;
 pub type N = u16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +37,8 @@ pub enum Op {
     Jump(Address),
 
     // Global Bindings
-    GetGlobal(Binding),
-    SetGlobal(Binding),
+    GetGlobal(GlobalBinding),
+    SetGlobal(GlobalBinding),
 
     // Composite Data Types
     Array(N),
@@ -47,6 +48,10 @@ pub enum Op {
     // Functions
     Call,
     Return,
+
+    // Local Bindings
+    GetLocal(LocalBinding),
+    SetLocal(LocalBinding),
 }
 
 #[rustfmt::skip]
@@ -84,6 +89,9 @@ impl Op {
     pub const CALL     : u8 = 22;
     pub const RETURN   : u8 = 23;
 
+    pub const GETLOCAL : u8 = 24;
+    pub const SETLOCAL : u8 = 25;
+
     pub fn format(op: u8) -> String {
         match op {
             Op::CONSTANT => "constant",
@@ -109,6 +117,8 @@ impl Op {
             Op::MAP => "map",
             Op::CALL => "call",
             Op::RETURN => "return",
+            Op::GETLOCAL => "get_local",
+            Op::SETLOCAL => "set_local",
             _ => "?",
         }.to_string()
     }
@@ -141,6 +151,8 @@ impl fmt::Display for Op {
             Op::Index => write!(f, "Index"),
             Op::Call => write!(f, "Call"),
             Op::Return => write!(f, "Return"),
+            Op::GetLocal(binding) => write!(f, "GetLocal {}", binding),
+            Op::SetLocal(binding) => write!(f, "SetLocal {}", binding),
         }
     }
 }

@@ -61,7 +61,7 @@ pub fn interpret() -> io::Result<()> {
 fn compile_run() -> io::Result<()> {
     let mut buffer = String::new();
 
-    let mut symbol_table = SymbolTable::new();
+    let mut symbol_table = SymbolTable::empty();
     let mut globals = vec![0; 128];
     let mut heap = vec![
         vm::Object::unit(),
@@ -80,7 +80,7 @@ fn compile_run() -> io::Result<()> {
         match buffer.trim() {
             QUIT => return Ok(()),
             CLEAR => {
-                symbol_table = SymbolTable::new();
+                symbol_table = SymbolTable::empty();
                 globals = vec![0; 128];
                 heap = vec![
                     vm::Object::unit(),

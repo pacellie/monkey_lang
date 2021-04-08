@@ -2,8 +2,11 @@ use crate::compiler::{Op, Reference};
 use crate::error::{MonkeyError, Result};
 use crate::lexer::Token;
 use crate::parser::ast::*;
+use crate::symbol;
 use crate::symbol::*;
 use crate::vm::Object;
+
+use std::mem;
 
 #[derive(Debug, Clone)]
 pub struct ByteCode {
@@ -32,7 +35,7 @@ impl Compiler {
                 Object::boolean(false),
                 Object::boolean(true),
             ],
-            symbol_table: SymbolTable::new(),
+            symbol_table: SymbolTable::empty(),
         }
     }
 
@@ -41,11 +44,14 @@ impl Compiler {
     }
 
     fn enter_scope(&mut self) {
+        self.symbol_table =
+            SymbolTable::new(mem::replace(&mut self.symbol_table, SymbolTable::empty()));
         self.scopes.push(Scope { bytes: vec![] });
         self.scope += 1;
     }
 
     fn leave_scope(&mut self) -> Vec<u8> {
+        self.symbol_table = *self.symbol_table.outer.take().unwrap();
         self.scope -= 1;
         self.scopes.pop().unwrap().bytes
     }
@@ -89,8 +95,16 @@ impl Compiler {
         match stmt {
             Statement::Let { name, expr } => {
                 self.compile_expr(expr)?;
-                let index = self.symbol_table.define(name).index;
-                self.emit(Op::SetGlobal(index));
+
+                let symbol = self.symbol_table.define(name);
+                let scope = symbol.scope;
+                let index = symbol.index;
+
+                if let symbol::Scope::Local = scope {
+                    self.emit(Op::SetLocal(index as u8));
+                } else {
+                    self.emit(Op::SetGlobal(index));
+                }
             }
             Statement::Return(expr) => {
                 self.compile_expr(expr)?;
@@ -109,15 +123,21 @@ impl Compiler {
     fn compile_expr(&mut self, expr: &Expression) -> Result<()> {
         match expr {
             Expression::Name(name) => {
-                let index = self
+                let symbol = self
                     .symbol_table
                     .resolve(name)
                     .map_or(Err(MonkeyError::undefined_variable(name)), |symbol| {
                         Ok(symbol)
-                    })?
-                    .index;
+                    })?;
 
-                self.emit(Op::GetGlobal(index));
+                let scope = symbol.scope;
+                let index = symbol.index;
+
+                if let symbol::Scope::Local = scope {
+                    self.emit(Op::GetLocal(index as u8));
+                } else {
+                    self.emit(Op::GetGlobal(index));
+                }
             }
             Expression::Integer(i) => {
                 let reference = self.allocate(Object::integer(*i));
@@ -335,6 +355,14 @@ impl Compiler {
             Op::Return => {
                 self.current_scope().bytes.push(Op::RETURN);
             }
+            Op::GetLocal(binding) => {
+                self.current_scope().bytes.push(Op::GETLOCAL);
+                self.current_scope().bytes.push(binding);
+            }
+            Op::SetLocal(binding) => {
+                self.current_scope().bytes.push(Op::SETLOCAL);
+                self.current_scope().bytes.push(binding);
+            }
         }
     }
 }
@@ -412,6 +440,16 @@ mod tests {
                     Op::INDEX => ops.push(Op::Index),
                     Op::CALL => ops.push(Op::Call),
                     Op::RETURN => ops.push(Op::Return),
+                    Op::GETLOCAL => {
+                        let binding = self[i + 1];
+                        ops.push(Op::GetLocal(binding));
+                        i += 1;
+                    }
+                    Op::SETLOCAL => {
+                        let binding = self[i + 1];
+                        ops.push(Op::SetLocal(binding));
+                        i += 1;
+                    }
                     _ => {
                         return None;
                     }
@@ -1109,6 +1147,68 @@ mod tests {
             ])),
         ] ;
         "call expr 03"
+    )]
+    #[test_case(
+        "let x = 42; fn() { x }",
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::Constant(4),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(42),
+            Object::Function(encode(vec![
+                Op::GetGlobal(0),
+                Op::Return,
+            ])),
+        ] ;
+        "let stmt scopes 01"
+    )]
+    #[test_case(
+        "fn() { let x = 42; x }",
+        vec![
+            Op::Constant(4),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(42),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::SetLocal(0),
+                Op::GetLocal(0),
+                Op::Return,
+            ])),
+        ] ;
+        "let stmt scopes 02"
+    )]
+    #[test_case(
+        "fn() { let x = 1; let y = 2; x + y }",
+        vec![
+            Op::Constant(5),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(1),
+            Object::integer(2),
+            Object::Function(encode(vec![
+                Op::Constant(3),
+                Op::SetLocal(0),
+                Op::Constant(4),
+                Op::SetLocal(1),
+                Op::GetLocal(0),
+                Op::GetLocal(1),
+                Op::Add,
+                Op::Return,
+            ])),
+        ] ;
+        "let stmt scopes 03"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());
