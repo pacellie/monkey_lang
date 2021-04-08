@@ -3,8 +3,6 @@ use std::fmt;
 
 use crate::compiler::Reference;
 
-use itertools::*;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Primitive {
     Unit,
@@ -31,22 +29,16 @@ pub enum Object {
     Primitive(Primitive),
     Array(Vec<Reference>),
     Map(HashMap<Primitive, Reference>),
-    Function(Vec<u8>),
+    Function { bytes: Vec<u8>, locals: usize },
 }
 
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Object::Primitive(p) => write!(f, "{}", p),
-            Object::Array(vec) => write!(f, "[{}]", vec.iter().join(", ")),
-            Object::Map(map) => write!(
-                f,
-                "{{{}}}",
-                map.iter()
-                    .map(|(key, value)| { format!("{}: {}", key, value) })
-                    .join(", ")
-            ),
-            Object::Function(_) => write!(f, "function"),
+            Object::Array(_) => write!(f, "array"),
+            Object::Map(_) => write!(f, "map"),
+            Object::Function { .. } => write!(f, "function"),
         }
     }
 }

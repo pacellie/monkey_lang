@@ -225,6 +225,8 @@ impl Compiler {
 
                 self.compile_block_stmt(body)?;
 
+                let locals = self.symbol_table.size();
+
                 let mut bytes = self.leave_scope();
 
                 if bytes.len() == 0 {
@@ -242,7 +244,7 @@ impl Compiler {
                     }
                 }
 
-                let reference = self.allocate(Object::Function(bytes));
+                let reference = self.allocate(Object::Function { bytes, locals });
                 self.emit(Op::Constant(reference));
             }
             Expression::Call { expr, args } => {
@@ -1015,12 +1017,15 @@ mod tests {
             Object::boolean(true),
             Object::integer(5),
             Object::integer(10),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Constant(4),
-                Op::Add,
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Constant(4),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "function literal 01"
     )]
@@ -1035,12 +1040,15 @@ mod tests {
             Object::boolean(true),
             Object::integer(5),
             Object::integer(10),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Constant(4),
-                Op::Add,
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Constant(4),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "function literal 02"
     )]
@@ -1055,12 +1063,15 @@ mod tests {
             Object::boolean(true),
             Object::integer(5),
             Object::integer(10),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Pop,
-                Op::Constant(4),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Pop,
+                    Op::Constant(4),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "function literal 03"
     )]
@@ -1073,10 +1084,13 @@ mod tests {
             Object::unit(),
             Object::boolean(false),
             Object::boolean(true),
-            Object::Function(encode(vec![
-                Op::Constant(0),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(0),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "function literal 04"
     )]
@@ -1091,10 +1105,13 @@ mod tests {
             Object::boolean(false),
             Object::boolean(true),
             Object::integer(42),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "call expr 01"
     )]
@@ -1111,10 +1128,13 @@ mod tests {
             Object::boolean(false),
             Object::boolean(true),
             Object::integer(42),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "call expr 02"
     )]
@@ -1136,15 +1156,21 @@ mod tests {
             Object::boolean(false),
             Object::boolean(true),
             Object::integer(1),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
             Object::integer(2),
-            Object::Function(encode(vec![
-                Op::Constant(5),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(5),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "call expr 03"
     )]
@@ -1160,10 +1186,13 @@ mod tests {
             Object::boolean(false),
             Object::boolean(true),
             Object::integer(42),
-            Object::Function(encode(vec![
-                Op::GetGlobal(0),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetGlobal(0),
+                    Op::Return,
+                ]),
+                locals: 0
+            },
         ] ;
         "let stmt scopes 01"
     )]
@@ -1177,12 +1206,15 @@ mod tests {
             Object::boolean(false),
             Object::boolean(true),
             Object::integer(42),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::SetLocal(0),
-                Op::GetLocal(0),
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::SetLocal(0),
+                    Op::GetLocal(0),
+                    Op::Return,
+                ]),
+                locals: 1
+            },
         ] ;
         "let stmt scopes 02"
     )]
@@ -1197,16 +1229,19 @@ mod tests {
             Object::boolean(true),
             Object::integer(1),
             Object::integer(2),
-            Object::Function(encode(vec![
-                Op::Constant(3),
-                Op::SetLocal(0),
-                Op::Constant(4),
-                Op::SetLocal(1),
-                Op::GetLocal(0),
-                Op::GetLocal(1),
-                Op::Add,
-                Op::Return,
-            ])),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(3),
+                    Op::SetLocal(0),
+                    Op::Constant(4),
+                    Op::SetLocal(1),
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 2
+            },
         ] ;
         "let stmt scopes 03"
     )]

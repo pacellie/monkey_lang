@@ -34,6 +34,10 @@ impl SymbolTable {
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.store.len()
+    }
+
     pub fn define(&mut self, name: &str) -> &Symbol {
         let scope = if self.outer.is_none() {
             Scope::Global
