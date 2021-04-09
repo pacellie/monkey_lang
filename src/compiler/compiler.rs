@@ -223,6 +223,10 @@ impl Compiler {
             Expression::Function { params, body } => {
                 self.enter_scope();
 
+                for param in params {
+                    self.symbol_table.define(param);
+                }
+
                 self.compile_block_stmt(body)?;
 
                 let locals = self.symbol_table.size();
@@ -244,19 +248,27 @@ impl Compiler {
                     }
                 }
 
-                let reference = self.allocate(Object::Function { bytes, locals });
+                let reference = self.allocate(Object::Function {
+                    bytes,
+                    locals,
+                    params: params.len(),
+                });
                 self.emit(Op::Constant(reference));
             }
             Expression::Call { expr, args } => {
                 self.compile_expr(expr)?;
-                self.emit(Op::Call);
+
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+
+                self.emit(Op::Call(args.len() as u8));
             }
             Expression::Index { expr, index } => {
                 self.compile_expr(expr)?;
                 self.compile_expr(index)?;
                 self.emit(Op::Index);
             }
-            _ => panic!(),
         }
 
         Ok(())
@@ -351,8 +363,9 @@ impl Compiler {
             Op::Index => {
                 self.current_scope().bytes.push(Op::INDEX);
             }
-            Op::Call => {
+            Op::Call(m) => {
                 self.current_scope().bytes.push(Op::CALL);
+                self.current_scope().bytes.push(m);
             }
             Op::Return => {
                 self.current_scope().bytes.push(Op::RETURN);
@@ -440,7 +453,11 @@ mod tests {
                         i += 2;
                     }
                     Op::INDEX => ops.push(Op::Index),
-                    Op::CALL => ops.push(Op::Call),
+                    Op::CALL => {
+                        let m = self[i + 1];
+                        ops.push(Op::Call(m));
+                        i += 1;
+                    }
                     Op::RETURN => ops.push(Op::Return),
                     Op::GETLOCAL => {
                         let binding = self[i + 1];
@@ -1024,7 +1041,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function literal 01"
@@ -1047,7 +1065,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function literal 02"
@@ -1070,7 +1089,8 @@ mod tests {
                     Op::Constant(4),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function literal 03"
@@ -1089,7 +1109,8 @@ mod tests {
                     Op::Constant(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function literal 04"
@@ -1098,7 +1119,7 @@ mod tests {
         "fn() { 42 }()",
         vec![
             Op::Constant(4),
-            Op::Call,
+            Op::Call(0),
         ],
         vec![
             Object::unit(),
@@ -1110,7 +1131,8 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "call expr 01"
@@ -1121,7 +1143,7 @@ mod tests {
             Op::Constant(4),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
-            Op::Call,
+            Op::Call(0),
         ],
         vec![
             Object::unit(),
@@ -1133,7 +1155,8 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "call expr 02"
@@ -1146,9 +1169,9 @@ mod tests {
             Op::Constant(6),
             Op::SetGlobal(1),
             Op::GetGlobal(0),
-            Op::Call,
+            Op::Call(0),
             Op::GetGlobal(1),
-            Op::Call,
+            Op::Call(0),
             Op::Add,
         ],
         vec![
@@ -1161,7 +1184,8 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(2),
             Object::Function {
@@ -1169,10 +1193,69 @@ mod tests {
                     Op::Constant(5),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "call expr 03"
+    )]
+    #[test_case(
+        "let f = fn(x) { x }; f(42)",
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Constant(4),
+            Op::Call(1),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(42),
+        ] ;
+        "call expr 04"
+    )]
+    #[test_case(
+        "let f = fn(x, y, z) { x; y; z }; f(1, 2, 3)",
+        vec![
+            Op::Constant(3),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Constant(4),
+            Op::Constant(5),
+            Op::Constant(6),
+            Op::Call(3),
+        ],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Pop,
+                    Op::GetLocal(1),
+                    Op::Pop,
+                    Op::GetLocal(2),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 3,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+        ] ;
+        "call expr 05"
     )]
     #[test_case(
         "let x = 42; fn() { x }",
@@ -1191,7 +1274,8 @@ mod tests {
                     Op::GetGlobal(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "let stmt scopes 01"
@@ -1213,7 +1297,8 @@ mod tests {
                     Op::GetLocal(0),
                     Op::Return,
                 ]),
-                locals: 1
+                locals: 1,
+                params: 0,
             },
         ] ;
         "let stmt scopes 02"
@@ -1240,7 +1325,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 2
+                locals: 2,
+                params: 0,
             },
         ] ;
         "let stmt scopes 03"

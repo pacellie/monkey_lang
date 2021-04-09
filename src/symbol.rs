@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use itertools::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     Global,
@@ -11,6 +13,12 @@ pub enum Scope {
 pub struct Symbol {
     pub scope: Scope,
     pub index: u16,
+}
+
+impl fmt::Display for Symbol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.index)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +70,14 @@ impl SymbolTable {
 
 impl fmt::Display for SymbolTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.store)
+        write!(
+            f,
+            "{{{}}}",
+            self.store
+                .iter()
+                .map(|(key, value)| format!("{} -> {}", key, value))
+                .join(", ")
+        )
     }
 }
 

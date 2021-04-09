@@ -29,7 +29,11 @@ pub enum Object {
     Primitive(Primitive),
     Array(Vec<Reference>),
     Map(HashMap<Primitive, Reference>),
-    Function { bytes: Vec<u8>, locals: usize },
+    Function {
+        bytes: Vec<u8>,
+        locals: usize,
+        params: usize,
+    },
 }
 
 impl fmt::Display for Object {

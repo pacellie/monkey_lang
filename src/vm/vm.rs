@@ -125,7 +125,7 @@ impl VirtualMachine {
         while self.pc() < self.frame().bytes.len() {
             let op = self.frame().bytes[self.pc()];
 
-            print!("{} ", Op::format(op));
+            // print!("{} ", Op::format(op));
 
             match op {
                 Op::CONSTANT => self.constant()?,
@@ -157,7 +157,7 @@ impl VirtualMachine {
                 }
             }
 
-            println!("{:?}", self.stack);
+            // println!("{:?}", self.stack);
 
             *self.pc_mut() += 1;
         }
@@ -376,13 +376,25 @@ impl VirtualMachine {
     }
 
     fn call(&mut self) -> Result<()> {
-        let reference = self.stack[self.sp - 1];
+        let args = self.read_u8() as usize;
+        *self.pc_mut() += 1;
+
+        let reference = self.stack[self.sp - 1 - args];
         let obj = self.dereference(reference)?;
 
-        if let Object::Function { bytes, locals } = obj {
-            let frame = Frame::new(bytes.clone(), self.sp);
-            self.sp = frame.fp + locals;
-            self.push_frame(frame);
+        if let Object::Function {
+            bytes,
+            locals,
+            params,
+        } = obj
+        {
+            if args == *params {
+                let frame = Frame::new(bytes.clone(), self.sp - args);
+                self.sp = frame.fp + locals;
+                self.push_frame(frame);
+            } else {
+                return Err(MonkeyError::wrong_number_of_args(*params, args));
+            }
         } else {
             return Err(MonkeyError::type_mismatch(format!("{}(...)", obj)));
         }
@@ -1258,7 +1270,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(15),
         ] ;
@@ -1278,7 +1291,8 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(2),
             Object::Function {
@@ -1286,7 +1300,8 @@ mod tests {
                     Op::Constant(5),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(3),
         ] ;
@@ -1306,29 +1321,32 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(2),
             Object::Function {
                 bytes: encode(vec![
                     Op::GetGlobal(0),
-                    Op::Call,
+                    Op::Call(0),
                     Op::Constant(5),
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(3),
             Object::Function {
                 bytes: encode(vec![
                     Op::GetGlobal(1),
-                    Op::Call,
+                    Op::Call(0),
                     Op::Constant(7),
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::integer(3),
             Object::integer(6),
@@ -1352,7 +1370,8 @@ mod tests {
                     Op::Constant(4),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function call 04"
@@ -1374,7 +1393,8 @@ mod tests {
                     Op::Constant(4),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function call 05"
@@ -1392,7 +1412,8 @@ mod tests {
                     Op::Constant(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function call 06"
@@ -1410,15 +1431,17 @@ mod tests {
                     Op::Constant(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::Function {
                 bytes: encode(vec![
                     Op::GetGlobal(0),
-                    Op::Call,
+                    Op::Call(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function call 07"
@@ -1437,14 +1460,16 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::Function {
                 bytes: encode(vec![
                     Op::GetGlobal(0),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
         ] ;
         "function call 08"
@@ -1465,7 +1490,8 @@ mod tests {
                     Op::GetLocal(0),
                     Op::Return,
                 ]),
-                locals: 1
+                locals: 1,
+                params: 0,
             },
         ] ;
         "function call 09"
@@ -1491,7 +1517,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 2
+                locals: 2,
+                params: 0,
             },
             Object::integer(3),
         ] ;
@@ -1518,7 +1545,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 2
+                locals: 2,
+                params: 0,
             },
             Object::integer(3),
             Object::integer(4),
@@ -1533,7 +1561,8 @@ mod tests {
                     Op::Add,
                     Op::Return,
                 ]),
-                locals: 2
+                locals: 2,
+                params: 0,
             },
             Object::integer(3),
             Object::integer(7),
@@ -1560,7 +1589,8 @@ mod tests {
                     Op::Sub,
                     Op::Return,
                 ]),
-                locals: 1
+                locals: 1,
+                params: 0,
             },
             Object::integer(2),
             Object::Function {
@@ -1572,7 +1602,8 @@ mod tests {
                     Op::Sub,
                     Op::Return,
                 ]),
-                locals: 1
+                locals: 1,
+                params: 0,
             },
             Object::integer(41),
             Object::integer(40),
@@ -1594,7 +1625,8 @@ mod tests {
                     Op::Constant(3),
                     Op::Return,
                 ]),
-                locals: 0
+                locals: 0,
+                params: 0,
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1603,10 +1635,220 @@ mod tests {
                     Op::GetLocal(0),
                     Op::Return,
                 ]),
-                locals: 1
+                locals: 1,
+                params: 0,
             },
         ] ;
         "function call 13"
+    )]
+    #[test_case(
+        "let f = fn(x) { x }; f(42)",
+        vec![4],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(42),
+        ] ;
+        "function call 14"
+    )]
+    #[test_case(
+        "let f = fn(x, y) { x + y }; f(1, 2)",
+        vec![6],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 2,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+        ] ;
+        "function call 15"
+    )]
+    #[test_case(
+        "let f = fn(x, y) { let z = x + y; z }; f(1, 2)",
+        vec![6],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+        ] ;
+        "function call 16"
+    )]
+    #[test_case(
+        "let f = fn(x, y) { let z = x + y; z }; f(1, 2) + f(3, 4)",
+        vec![10],
+        vec![3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::integer(3),
+            Object::integer(7),
+            Object::integer(10),
+        ] ;
+        "function call 17"
+    )]
+    #[test_case(
+        "let f = fn(x, y) { let z = x + y; z }; let g = fn() { f(1, 2) + f(3, 4) }; g()",
+        vec![11],
+        vec![3, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetGlobal(0),
+                    Op::Constant(4),
+                    Op::Constant(5),
+                    Op::Call(2),
+                    Op::GetGlobal(0),
+                    Op::Constant(6),
+                    Op::Constant(7),
+                    Op::Call(2),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::integer(3),
+            Object::integer(7),
+            Object::integer(10),
+        ] ;
+        "function call 18"
+    )]
+    #[test_case(
+        "let a = 42;\n\
+         let f = fn(x, y) {\n\
+             let z = x + y;\n\
+             z + a\n\
+         };\n\
+         let g = fn() {\n\
+             f(1, 2) + f(3, 4) + a\n\
+         };\n\
+         g() + a",
+        vec![16],
+        vec![3, 4, 9, 0, 0, 0, 0, 0, 0, 0],
+        vec![
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+            Object::integer(42),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::GetGlobal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetGlobal(1),
+                    Op::Constant(5),
+                    Op::Constant(6),
+                    Op::Call(2),
+                    Op::GetGlobal(1),
+                    Op::Constant(7),
+                    Op::Constant(8),
+                    Op::Call(2),
+                    Op::Add,
+                    Op::GetGlobal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::integer(3),
+            Object::integer(45),
+            Object::integer(7),
+            Object::integer(49),
+            Object::integer(94),
+            Object::integer(136),
+            Object::integer(178),
+        ] ;
+        "function call 19"
     )]
     fn test(input: &str, stack: Vec<Reference>, globals: Vec<Reference>, heap: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());
@@ -1623,19 +1865,22 @@ mod tests {
         assert_eq!(vm.heap, heap)
     }
 
-    #[test_case("5 + true"              , MonkeyError::type_mismatch("5 + true")        ; "error 01")]
-    #[test_case("5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")        ; "error 02")]
-    #[test_case("-true"                 , MonkeyError::type_mismatch("-true")           ; "error 03")]
-    #[test_case("!5"                    , MonkeyError::type_mismatch("!5")              ; "error 04")]
-    #[test_case("5; true + false; 5"    , MonkeyError::type_mismatch("true + false")    ; "error 05")]
-    #[test_case("if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")    ; "error 06")]
+    #[test_case("5 + true"              , MonkeyError::type_mismatch("5 + true")      ; "error 01")]
+    #[test_case("5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")      ; "error 02")]
+    #[test_case("-true"                 , MonkeyError::type_mismatch("-true")         ; "error 03")]
+    #[test_case("!5"                    , MonkeyError::type_mismatch("!5")            ; "error 04")]
+    #[test_case("5; true + false; 5"    , MonkeyError::type_mismatch("true + false")  ; "error 05")]
+    #[test_case("if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")  ; "error 06")]
     // #[test_case("len(1)"                , MonkeyError::type_mismatch("len(1)")          ; "error 07")]
     // #[test_case("len(\"one\", \"two\")" , MonkeyError::wrong_number_of_args(1, 2)       ; "error 08")]
-    #[test_case("[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)        ; "error 09")]
-    #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)       ; "error 10")]
-    #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")         ; "error 11")]
-    #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")         ; "error 12")]
-    // #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[fn(x) { x }]") ; "error 13")]
+    #[test_case("[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)      ; "error 09")]
+    #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)     ; "error 10")]
+    #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")       ; "error 11")]
+    #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")       ; "error 12")]
+    #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("map[function]") ; "error 13")]
+    #[test_case("fn() { 1 }(1)"         , MonkeyError::wrong_number_of_args(0, 1)     ; "error 14")]
+    #[test_case("fn(x) { x }()"         , MonkeyError::wrong_number_of_args(1, 0)     ; "error 15")]
+    #[test_case("fn(x, y) { x + y }(1)" , MonkeyError::wrong_number_of_args(2, 1)     ; "error 16")]
     fn test_error(input: &str, expected: MonkeyError) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);

@@ -5,6 +5,7 @@ pub type Address = u16;
 pub type GlobalBinding = u16;
 pub type LocalBinding = u8;
 pub type N = u16;
+pub type M = u8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -46,7 +47,7 @@ pub enum Op {
     Index,
 
     // Functions
-    Call,
+    Call(M),
     Return,
 
     // Local Bindings
@@ -149,7 +150,7 @@ impl fmt::Display for Op {
             Op::Array(n) => write!(f, "Array[{}]", n),
             Op::Map(n) => write!(f, "Map[{}]", n),
             Op::Index => write!(f, "Index"),
-            Op::Call => write!(f, "Call"),
+            Op::Call(m) => write!(f, "Call {}", m),
             Op::Return => write!(f, "Return"),
             Op::GetLocal(binding) => write!(f, "GetLocal {}", binding),
             Op::SetLocal(binding) => write!(f, "SetLocal {}", binding),

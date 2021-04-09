@@ -91,8 +91,16 @@ fn compile_run() -> io::Result<()> {
             ENV => println!(
                 "{}\n[{}]\n[{}]",
                 symbol_table,
-                globals.iter().take_while(|global| **global != 0).join(", "),
-                heap.iter().join(", ")
+                globals
+                    .iter()
+                    .take_while(|global| **global != 0)
+                    .enumerate()
+                    .map(|(i, reference)| format!("{}: {}", i, reference))
+                    .join(", "),
+                heap.iter()
+                    .enumerate()
+                    .map(|(i, obj)| format!("{}: {}", i, obj))
+                    .join(", ")
             ),
             line => {
                 let lexer = Lexer::new(line.as_bytes());
