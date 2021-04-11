@@ -3,7 +3,6 @@ use crate::interpreter::{eval_program, Environment};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::symbol::SymbolTable;
-use crate::vm;
 use crate::vm::VirtualMachine;
 
 use std::cell::RefCell;
@@ -61,13 +60,9 @@ pub fn interpret() -> io::Result<()> {
 fn compile_run() -> io::Result<()> {
     let mut buffer = String::new();
 
-    let mut symbol_table = SymbolTable::empty();
+    let mut symbol_table = SymbolTable::toplevel();
     let mut globals = vec![0; 128];
-    let mut heap = vec![
-        vm::Object::unit(),
-        vm::Object::boolean(false),
-        vm::Object::boolean(true),
-    ];
+    let mut heap = Compiler::static_constants();
 
     println!("{}", CMDS);
 
@@ -80,13 +75,9 @@ fn compile_run() -> io::Result<()> {
         match buffer.trim() {
             QUIT => return Ok(()),
             CLEAR => {
-                symbol_table = SymbolTable::empty();
+                symbol_table = SymbolTable::toplevel();
                 globals = vec![0; 128];
-                heap = vec![
-                    vm::Object::unit(),
-                    vm::Object::boolean(false),
-                    vm::Object::boolean(true),
-                ];
+                heap = Compiler::static_constants();
             }
             ENV => println!(
                 "{}\n[{}]\n[{}]",

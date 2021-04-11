@@ -4,4 +4,4 @@ mod object;
 
 pub use environment::Environment;
 pub use interpreter::{eval, eval_program};
-pub use object::{Builtin, Object, Primitive};
+pub use object::{Object, Primitive};

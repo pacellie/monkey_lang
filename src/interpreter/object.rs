@@ -1,3 +1,4 @@
+use crate::builtin::Builtin;
 use crate::interpreter::Environment;
 use crate::parser::ast::Block;
 
@@ -7,43 +8,6 @@ use std::fmt;
 use std::rc::Rc;
 
 use itertools::Itertools;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Builtin {
-    Len,
-    First,
-    Last,
-    Rest,
-    Push,
-    Puts,
-}
-
-impl fmt::Display for Builtin {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Builtin::Len => write!(f, "len"),
-            Builtin::First => write!(f, "first"),
-            Builtin::Last => write!(f, "last"),
-            Builtin::Rest => write!(f, "rest"),
-            Builtin::Push => write!(f, "push"),
-            Builtin::Puts => write!(f, "puts"),
-        }
-    }
-}
-
-impl Builtin {
-    pub fn builtin_by_name(name: &str) -> Option<Builtin> {
-        match name {
-            "len" => Some(Builtin::Len),
-            "first" => Some(Builtin::First),
-            "last" => Some(Builtin::Last),
-            "rest" => Some(Builtin::Rest),
-            "push" => Some(Builtin::Push),
-            "puts" => Some(Builtin::Puts),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Primitive {

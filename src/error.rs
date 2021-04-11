@@ -64,6 +64,13 @@ impl MonkeyError {
     {
         MonkeyError::CompilerError(format!("undefined variable {}", msg.into()))
     }
+
+    pub fn runtime_error<S>(msg: S) -> MonkeyError
+    where
+        S: Into<String>,
+    {
+        MonkeyError::RuntimeError(msg.into())
+    }
 }
 
 impl fmt::Display for MonkeyError {

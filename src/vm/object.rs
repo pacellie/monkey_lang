@@ -1,13 +1,15 @@
+use crate::builtin::Builtin;
+use crate::compiler::Reference;
+
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::compiler::Reference;
+use itertools::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Primitive {
     Unit,
-    False,
-    True,
+    Boolean(bool),
     Integer(i32),
     String(String),
 }
@@ -16,8 +18,7 @@ impl fmt::Display for Primitive {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Primitive::Unit => write!(f, "unit"),
-            Primitive::False => write!(f, "false"),
-            Primitive::True => write!(f, "true"),
+            Primitive::Boolean(b) => write!(f, "{}", b),
             Primitive::Integer(i) => write!(f, "{}", i),
             Primitive::String(s) => write!(f, "\"{}\"", s),
         }
@@ -34,15 +35,29 @@ pub enum Object {
         locals: usize,
         params: usize,
     },
+    Builtin(Builtin),
 }
 
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Object::Primitive(p) => write!(f, "{}", p),
-            Object::Array(_) => write!(f, "array"),
-            Object::Map(_) => write!(f, "map"),
+            Object::Array(vec) => write!(
+                f,
+                "[{}]",
+                vec.iter()
+                    .map(|reference| format!("{}", reference))
+                    .join(", ")
+            ),
+            Object::Map(map) => write!(
+                f,
+                "{{{}}}",
+                map.iter()
+                    .map(|(key, value)| format!("{} -> {}", key, value))
+                    .join(", ")
+            ),
             Object::Function { .. } => write!(f, "function"),
+            Object::Builtin(builtin) => write!(f, "{}", builtin),
         }
     }
 }
@@ -53,7 +68,7 @@ impl Object {
     }
 
     pub fn boolean(b: bool) -> Object {
-        Object::Primitive(if b { Primitive::True } else { Primitive::False })
+        Object::Primitive(Primitive::Boolean(b))
     }
 
     pub fn integer(i: i32) -> Object {

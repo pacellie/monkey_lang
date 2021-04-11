@@ -1,3 +1,4 @@
+use crate::builtin::Builtin;
 use crate::compiler::{Op, Reference};
 use crate::error::{MonkeyError, Result};
 use crate::lexer::Token;
@@ -30,13 +31,23 @@ impl Compiler {
         Compiler {
             scopes: vec![Scope { bytes: vec![] }],
             scope: 0,
-            constants: vec![
-                Object::unit(),
-                Object::boolean(false),
-                Object::boolean(true),
-            ],
-            symbol_table: SymbolTable::empty(),
+            constants: Compiler::static_constants(),
+            symbol_table: SymbolTable::toplevel(),
         }
+    }
+
+    pub fn static_constants() -> Vec<Object> {
+        vec![
+            Object::Builtin(Builtin::Len),
+            Object::Builtin(Builtin::First),
+            Object::Builtin(Builtin::Last),
+            Object::Builtin(Builtin::Rest),
+            Object::Builtin(Builtin::Push),
+            Object::Builtin(Builtin::Puts),
+            Object::unit(),
+            Object::boolean(false),
+            Object::boolean(true),
+        ]
     }
 
     fn current_scope(&mut self) -> &mut Scope {
@@ -100,10 +111,14 @@ impl Compiler {
                 let scope = symbol.scope;
                 let index = symbol.index;
 
-                if let symbol::Scope::Local = scope {
-                    self.emit(Op::SetLocal(index as u8));
-                } else {
-                    self.emit(Op::SetGlobal(index));
+                match scope {
+                    symbol::Scope::Local => {
+                        self.emit(Op::SetLocal(index as u8));
+                    }
+                    symbol::Scope::Global => {
+                        self.emit(Op::SetGlobal(index));
+                    }
+                    symbol::Scope::Builtin => (),
                 }
             }
             Statement::Return(expr) => {
@@ -133,10 +148,16 @@ impl Compiler {
                 let scope = symbol.scope;
                 let index = symbol.index;
 
-                if let symbol::Scope::Local = scope {
-                    self.emit(Op::GetLocal(index as u8));
-                } else {
-                    self.emit(Op::GetGlobal(index));
+                match scope {
+                    symbol::Scope::Local => {
+                        self.emit(Op::GetLocal(index as u8));
+                    }
+                    symbol::Scope::Global => {
+                        self.emit(Op::GetGlobal(index));
+                    }
+                    symbol::Scope::Builtin => {
+                        self.emit(Op::GetBuiltin(index as u8));
+                    }
                 }
             }
             Expression::Integer(i) => {
@@ -173,9 +194,7 @@ impl Compiler {
                 match operator {
                     Token::Minus => self.emit(Op::Minus),
                     Token::Bang => self.emit(Op::Bang),
-                    _ => {
-                        return Err(MonkeyError::type_mismatch(format!("{}{}", operator, expr)));
-                    }
+                    _ => return Err(MonkeyError::type_mismatch(format!("{}{}", operator, expr))),
                 };
             }
             Expression::Infix {
@@ -198,7 +217,7 @@ impl Compiler {
                         return Err(MonkeyError::type_mismatch(format!(
                             "{} {} {}",
                             left, operator, right
-                        )));
+                        )))
                     }
                 };
             }
@@ -235,18 +254,9 @@ impl Compiler {
 
                 if bytes.len() == 0 {
                     bytes.push(Op::CONSTANT);
-                    bytes.extend_from_slice(&0u16.to_be_bytes());
+                    bytes.extend_from_slice(&6u16.to_be_bytes());
                 }
-
-                match bytes[bytes.len() - 1] {
-                    Op::RETURN => (),
-                    Op::POP => {
-                        *bytes.last_mut().unwrap() = Op::RETURN;
-                    }
-                    _ => {
-                        bytes.push(Op::RETURN);
-                    }
-                }
+                bytes.push(Op::RETURN);
 
                 let reference = self.allocate(Object::Function {
                     bytes,
@@ -378,6 +388,10 @@ impl Compiler {
                 self.current_scope().bytes.push(Op::SETLOCAL);
                 self.current_scope().bytes.push(binding);
             }
+            Op::GetBuiltin(builtin) => {
+                self.current_scope().bytes.push(Op::GETBUILTIN);
+                self.current_scope().bytes.push(builtin);
+            }
         }
     }
 }
@@ -469,6 +483,11 @@ mod tests {
                         ops.push(Op::SetLocal(binding));
                         i += 1;
                     }
+                    Op::GETBUILTIN => {
+                        let builtin = self[i + 1];
+                        ops.push(Op::GetBuiltin(builtin));
+                        i += 1;
+                    }
                     _ => {
                         return None;
                     }
@@ -491,82 +510,76 @@ mod tests {
         compiler.scopes[0].bytes.clone()
     }
 
+    fn concat<A: Clone>(xs: Vec<A>, ys: Vec<A>) -> Vec<A> {
+        let zs: Vec<A> = xs.iter().cloned().chain(ys.iter().cloned()).collect();
+        zs
+    }
+
+    fn heap(objs: Vec<Object>) -> Vec<Object> {
+        concat(Compiler::static_constants(), objs)
+    }
+
     #[test_case(
         "1 + 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Add
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "integer arithmetic 01"
     )]
     #[test_case(
         "1 - 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Sub
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "integer arithmetic 02"
     )]
     #[test_case(
         "1 * 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Mul
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "integer arithmetic 03"
     )]
     #[test_case(
         "2 / 1",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Div
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(2),
             Object::integer(1)
-        ] ;
+        ]) ;
         "integer arithmetic 04"
     )]
     #[test_case(
         "-1",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::Minus
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1)
-        ] ;
+        ]) ;
         "integer arithmetic 05"
     )]
     #[test_case(
@@ -574,11 +587,7 @@ mod tests {
         vec![
             Op::False
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "boolean expression 01"
     )]
     #[test_case(
@@ -586,75 +595,59 @@ mod tests {
         vec![
             Op::True
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "boolean expression 02"
     )]
     #[test_case(
         "1 == 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Eq
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "boolean expression 03"
     )]
     #[test_case(
         "1 != 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Neq
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "boolean expression 04"
     )]
     #[test_case(
         "1 < 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Lt
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "boolean expression 05"
     )]
     #[test_case(
         "1 > 2",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Gt
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "boolean expression 06"
     )]
     #[test_case(
@@ -664,11 +657,7 @@ mod tests {
             Op::False,
             Op::Eq
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "boolean expression 07"
     )]
     #[test_case(
@@ -678,53 +667,39 @@ mod tests {
             Op::False,
             Op::Neq
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "boolean expression 08"
     )]
     #[test_case(
         "!true",
         vec![
-
             Op::True,
-            Op::Bang],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+            Op::Bang
+        ],
+        heap(vec![]) ;
         "boolean expression 09"
     )]
     #[test_case(
         "\"monkey\"",
         vec![
-            Op::Constant(3)
+            Op::Constant(9)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::string("monkey")
-        ] ;
+        ]) ;
         "string expression 01"
     )]
     #[test_case(
         "\"mon\" + \"key\"",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Add
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::string("mon"),
             Object::string("key")
-        ] ;
+        ]) ;
         "string expression 02"
     )]
     #[test_case(
@@ -732,55 +707,46 @@ mod tests {
         vec![
             Op::Array(0)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "array expression 01"
     )]
     #[test_case(
         "[1, 2, 3]",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
-            Op::Constant(5),
+            Op::Constant(9),
+            Op::Constant(10),
+            Op::Constant(11),
             Op::Array(3)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3)
-        ] ;
+        ]) ;
         "array expression 02"
     )]
     #[test_case(
         "[1 + 2, 3 - 4, 5 * 6]",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
-            Op::Add, Op::Constant(5),
-            Op::Constant(6),
+            Op::Constant(9),
+            Op::Constant(10),
+            Op::Add,
+            Op::Constant(11),
+            Op::Constant(12),
             Op::Sub,
-            Op::Constant(7),
-            Op::Constant(8),
+            Op::Constant(13),
+            Op::Constant(14),
             Op::Mul,
             Op::Array(3)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
             Object::integer(4),
             Object::integer(5),
             Object::integer(6)
-        ] ;
+        ]) ;
         "array expression 03"
     )]
     #[test_case(
@@ -788,107 +754,91 @@ mod tests {
         vec![
             Op::Map(0),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
-        ] ;
+        heap(vec![]) ;
         "map expression 01"
     )]
     #[test_case(
         "{1: 2, 3: 4, 5: 6}",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
-            Op::Constant(5),
-            Op::Constant(6),
-            Op::Constant(7),
-            Op::Constant(8),
+            Op::Constant(9),
+            Op::Constant(10),
+            Op::Constant(11),
+            Op::Constant(12),
+            Op::Constant(13),
+            Op::Constant(14),
             Op::Map(3),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
             Object::integer(4),
             Object::integer(5),
             Object::integer(6),
-        ] ;
+        ]) ;
         "map expression 02"
     )]
     #[test_case(
         "{1: 2 + 3, 4: 5 * 6}",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
-            Op::Constant(5),
+            Op::Constant(9),
+            Op::Constant(10),
+            Op::Constant(11),
             Op::Add,
-            Op::Constant(6),
-            Op::Constant(7),
-            Op::Constant(8),
+            Op::Constant(12),
+            Op::Constant(13),
+            Op::Constant(14),
             Op::Mul,
             Op::Map(2),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
             Object::integer(4),
             Object::integer(5),
             Object::integer(6),
-        ] ;
+        ]) ;
         "map expression 03"
     )]
     #[test_case(
         "[1, 2, 3][1 + 1]",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
-            Op::Constant(5),
+            Op::Constant(9),
+            Op::Constant(10),
+            Op::Constant(11),
             Op::Array(3),
-            Op::Constant(6),
-            Op::Constant(7),
+            Op::Constant(12),
+            Op::Constant(13),
             Op::Add,
             Op::Index,
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
             Object::integer(1),
             Object::integer(1),
-        ] ;
+        ]) ;
         "index expression 01"
     )]
     #[test_case(
         "{1: 2}[2 - 1]",
         vec![
-            Op::Constant(3),
-            Op::Constant(4),
+            Op::Constant(9),
+            Op::Constant(10),
             Op::Map(1),
-            Op::Constant(5),
-            Op::Constant(6),
+            Op::Constant(11),
+            Op::Constant(12),
             Op::Sub,
             Op::Index,
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(2),
             Object::integer(1),
-        ] ;
+        ]) ;
         "index expression 02"
     )]
     #[test_case(
@@ -896,20 +846,17 @@ mod tests {
         vec![
             Op::True,
             Op::JumpIfNot(10),
-            Op::Constant(3),
+            Op::Constant(9),
             Op::Jump(11),
             Op::Unit,
             Op::Pop,
-            Op::Constant(4),
+            Op::Constant(10),
             Op::Pop
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(10),
             Object::integer(20)
-        ] ;
+        ]) ;
         "if expression 01"
     )]
     #[test_case(
@@ -917,22 +864,19 @@ mod tests {
         vec![
             Op::True,
             Op::JumpIfNot(18),
-            Op::Constant(3),
+            Op::Constant(9),
             Op::Pop,
-            Op::Constant(4),
+            Op::Constant(10),
             Op::Pop,
-            Op::Constant(5),
+            Op::Constant(11),
             Op::Jump(19),
             Op::Unit
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::integer(3)
-        ] ;
+        ]) ;
         "if expression 02"
     )]
     #[test_case(
@@ -940,233 +884,201 @@ mod tests {
         vec![
             Op::True,
             Op::JumpIfNot(10),
-            Op::Constant(3),
+            Op::Constant(9),
             Op::Jump(13),
-            Op::Constant(4),
+            Op::Constant(10),
             Op::Pop,
-            Op::Constant(5),
+            Op::Constant(11),
             Op::Pop
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(10),
             Object::integer(20),
             Object::integer(30)
-        ] ;
+        ]) ;
         "if expression 03"
     )]
     #[test_case(
         "1; 2",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::Pop,
-            Op::Constant(4)
+            Op::Constant(10)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "expr stmt 01"
     )]
     #[test_case(
         "let one = 1; let two = 2;",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
-            Op::Constant(4),
+            Op::Constant(10),
             Op::SetGlobal(1)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2)
-        ] ;
+        ]) ;
         "global let stmt 01"
     )]
     #[test_case(
         "let one = 1; one;",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::Pop
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1)
-        ] ;
+        ]) ;
         "global let stmt 02"
     )]
     #[test_case(
         "let one = 1; let two = one; two",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::SetGlobal(1),
             Op::GetGlobal(1)
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1)
-        ] ;
+        ]) ;
         "global let stmt 03"
     )]
     #[test_case(
         "fn() { return 5 + 10; }",
         vec![
-            Op::Constant(5),
+            Op::Constant(11),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(5),
             Object::integer(10),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
-                    Op::Constant(4),
+                    Op::Constant(9),
+                    Op::Constant(10),
                     Op::Add,
+                    Op::Return,
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "function literal 01"
     )]
     #[test_case(
         "fn() { 5 + 10 }",
         vec![
-            Op::Constant(5),
+            Op::Constant(11),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(5),
             Object::integer(10),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
-                    Op::Constant(4),
+                    Op::Constant(9),
+                    Op::Constant(10),
                     Op::Add,
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "function literal 02"
     )]
     #[test_case(
         "fn() { 5; 10 }",
         vec![
-            Op::Constant(5),
+            Op::Constant(11),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(5),
             Object::integer(10),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::Pop,
-                    Op::Constant(4),
+                    Op::Constant(10),
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "function literal 03"
     )]
     #[test_case(
         "fn() { }",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(0),
+                    Op::Constant(6),
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "function literal 04"
     )]
     #[test_case(
         "fn() { 42 }()",
         vec![
-            Op::Constant(4),
+            Op::Constant(10),
             Op::Call(0),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(42),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "call expr 01"
     )]
     #[test_case(
         "let f = fn() { 42 }; f()",
         vec![
-            Op::Constant(4),
+            Op::Constant(10),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::Call(0),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(42),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "call expr 02"
     )]
     #[test_case(
         "let f = fn() { 1 }; let g = fn() { 2 }; f() + g()",
         vec![
-            Op::Constant(4),
+            Op::Constant(10),
             Op::SetGlobal(0),
-            Op::Constant(6),
+            Op::Constant(12),
             Op::SetGlobal(1),
             Op::GetGlobal(0),
             Op::Call(0),
@@ -1174,14 +1086,11 @@ mod tests {
             Op::Call(0),
             Op::Add,
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::Return,
                 ]),
                 locals: 0,
@@ -1190,28 +1099,25 @@ mod tests {
             Object::integer(2),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(5),
+                    Op::Constant(11),
                     Op::Return,
                 ]),
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "call expr 03"
     )]
     #[test_case(
         "let f = fn(x) { x }; f(42)",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
-            Op::Constant(4),
+            Op::Constant(10),
             Op::Call(1),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::Function {
                 bytes: encode(vec![
                     Op::GetLocal(0),
@@ -1221,24 +1127,21 @@ mod tests {
                 params: 1,
             },
             Object::integer(42),
-        ] ;
+        ]) ;
         "call expr 04"
     )]
     #[test_case(
         "let f = fn(x, y, z) { x; y; z }; f(1, 2, 3)",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
-            Op::Constant(4),
-            Op::Constant(5),
-            Op::Constant(6),
+            Op::Constant(10),
+            Op::Constant(11),
+            Op::Constant(12),
             Op::Call(3),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::Function {
                 bytes: encode(vec![
                     Op::GetLocal(0),
@@ -1254,20 +1157,17 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
-        ] ;
+        ]) ;
         "call expr 05"
     )]
     #[test_case(
         "let x = 42; fn() { x }",
         vec![
-            Op::Constant(3),
+            Op::Constant(9),
             Op::SetGlobal(0),
-            Op::Constant(4),
+            Op::Constant(10),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(42),
             Object::Function {
                 bytes: encode(vec![
@@ -1277,22 +1177,19 @@ mod tests {
                 locals: 0,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "let stmt scopes 01"
     )]
     #[test_case(
         "fn() { let x = 42; x }",
         vec![
-            Op::Constant(4),
+            Op::Constant(10),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(42),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Return,
@@ -1300,25 +1197,22 @@ mod tests {
                 locals: 1,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "let stmt scopes 02"
     )]
     #[test_case(
         "fn() { let x = 1; let y = 2; x + y }",
         vec![
-            Op::Constant(5),
+            Op::Constant(11),
         ],
-        vec![
-            Object::unit(),
-            Object::boolean(false),
-            Object::boolean(true),
+        heap(vec![
             Object::integer(1),
             Object::integer(2),
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(3),
+                    Op::Constant(9),
                     Op::SetLocal(0),
-                    Op::Constant(4),
+                    Op::Constant(10),
                     Op::SetLocal(1),
                     Op::GetLocal(0),
                     Op::GetLocal(1),
@@ -1328,8 +1222,45 @@ mod tests {
                 locals: 2,
                 params: 0,
             },
-        ] ;
+        ]) ;
         "let stmt scopes 03"
+    )]
+    #[test_case(
+        "len([]); push([], 1);",
+        vec![
+            Op::GetBuiltin(Builtin::LEN),
+            Op::Array(0),
+            Op::Call(1),
+            Op::Pop,
+            Op::GetBuiltin(Builtin::PUSH),
+            Op::Array(0),
+            Op::Constant(9),
+            Op::Call(2),
+            Op::Pop,
+        ],
+        heap(vec![
+            Object::integer(1),
+        ]);
+        "builtins 01"
+    )]
+    #[test_case(
+        "fn() { len([]) }",
+        vec![
+            Op::Constant(9),
+        ],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetBuiltin(Builtin::LEN),
+                    Op::Array(0),
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            }
+        ]) ;
+        "builtins 02"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

@@ -1,3 +1,5 @@
+use crate::builtin::Builtin;
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -7,6 +9,7 @@ use itertools::*;
 pub enum Scope {
     Global,
     Local,
+    Builtin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,7 +20,7 @@ pub struct Symbol {
 
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.index)
+        write!(f, "({:?}, {})", self.scope, self.index)
     }
 }
 
@@ -35,6 +38,21 @@ impl SymbolTable {
         }
     }
 
+    pub fn toplevel() -> SymbolTable {
+        let mut store = HashMap::new();
+
+        for (index, builtin) in Builtin::builtins().iter().enumerate() {
+            let symbol = Symbol {
+                scope: Scope::Builtin,
+                index: index as u16,
+            };
+
+            store.insert(builtin.to_string(), symbol);
+        }
+
+        SymbolTable { outer: None, store }
+    }
+
     pub fn new(outer: SymbolTable) -> SymbolTable {
         SymbolTable {
             outer: Some(Box::new(outer)),
@@ -47,15 +65,16 @@ impl SymbolTable {
     }
 
     pub fn define(&mut self, name: &str) -> &Symbol {
-        let scope = if self.outer.is_none() {
-            Scope::Global
+        let symbol = if self.outer.is_none() {
+            Symbol {
+                scope: Scope::Global,
+                index: self.store.len() as u16 - 6,
+            }
         } else {
-            Scope::Local
-        };
-
-        let symbol = Symbol {
-            scope,
-            index: self.store.len() as u16,
+            Symbol {
+                scope: Scope::Local,
+                index: self.store.len() as u16,
+            }
         };
 
         self.store.entry(name.to_string()).or_insert(symbol)
@@ -87,7 +106,7 @@ mod tests {
 
     #[test]
     fn define_resolve_0() {
-        let mut tbl = SymbolTable::empty();
+        let mut tbl = SymbolTable::toplevel();
         let a0 = tbl.define("a").clone();
         let b0 = tbl.define("b").clone();
 
@@ -111,7 +130,7 @@ mod tests {
 
     #[test]
     fn define_resolve_1() {
-        let mut tbl = SymbolTable::empty();
+        let mut tbl = SymbolTable::toplevel();
         let a0 = tbl.define("a").clone();
         let b0 = tbl.define("b").clone();
 

@@ -1,6 +1,7 @@
+use crate::builtin::Builtin;
 use crate::error::{MonkeyError, Result};
 use crate::interpreter::Environment;
-use crate::interpreter::{Builtin, Object, Primitive};
+use crate::interpreter::{Object, Primitive};
 use crate::lexer::Token;
 use crate::parser::ast::*;
 
@@ -226,7 +227,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[0].clone())
                     } else {
-                        Err(MonkeyError::RuntimeError("first([])".to_string()))
+                        Err(MonkeyError::runtime_error("first([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("first({})", obj))),
@@ -239,7 +240,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[vec.len() - 1].clone())
                     } else {
-                        Err(MonkeyError::RuntimeError("last([])".to_string()))
+                        Err(MonkeyError::runtime_error("last([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("last({})", obj))),
@@ -252,7 +253,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(Object::Array(vec[1..].to_vec()))
                     } else {
-                        Err(MonkeyError::RuntimeError("rest([])".to_string()))
+                        Err(MonkeyError::runtime_error("rest([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("rest({})", obj))),
@@ -274,7 +275,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
             _ => Err(MonkeyError::wrong_number_of_args(2, args.len())),
         },
         Builtin::Puts => {
-            args.iter().for_each(|obj| println!("{}", obj));
+            args.iter().for_each(|obj| print!("{}", obj));
             Ok(Object::Unit)
         }
     }
