@@ -5,9 +5,9 @@ use crate::vm::{Object, Primitive};
 
 use std::collections::HashMap;
 
-const STACK_SIZE: usize = 2048;
-const GLOBALS_SIZE: usize = 65535;
-const FRAMES_SIZE: usize = 1024;
+const STACK_SIZE: usize = 2 << 11;
+const GLOBALS_SIZE: usize = 2 << 16;
+const FRAMES_SIZE: usize = 2 << 10;
 
 const UNIT: u16 = 6;
 const FALSE: u16 = 7;
@@ -150,6 +150,7 @@ impl VirtualMachine {
                 Op::SETLOCAL => self.set_local(),
                 Op::GETLOCAL => self.get_local()?,
                 Op::GETBUILTIN => self.get_builtin()?,
+                Op::CLOSURE => self.closure()?,
                 _ => {
                     return Err(MonkeyError::RuntimeError(
                         "invalid bytecode format.".to_string(),
@@ -391,6 +392,7 @@ impl VirtualMachine {
                 bytes,
                 locals,
                 params,
+                free,
             } => self.call_function(bytes, locals, params, n_args),
             Object::Builtin(builtin) => self.call_builtin(builtin, n_args),
             _ => Err(MonkeyError::type_mismatch(format!("{}(...)", obj))),
@@ -539,6 +541,16 @@ impl VirtualMachine {
     fn get_builtin(&mut self) -> Result<()> {
         let reference = self.read_u8() as u16;
 
+        *self.pc_mut() += 1;
+
+        self.push(reference)
+    }
+
+    fn closure(&mut self) -> Result<()> {
+        let reference = self.read_u16();
+        *self.pc_mut() += 2;
+
+        let free = self.read_u8();
         *self.pc_mut() += 1;
 
         self.push(reference)
@@ -1216,6 +1228,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(15),
         ]) ;
@@ -1234,6 +1247,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1243,6 +1257,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
         ]) ;
@@ -1261,6 +1276,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1273,6 +1289,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::Function {
@@ -1285,6 +1302,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::integer(6),
@@ -1307,6 +1325,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 04"
@@ -1328,6 +1347,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 05"
@@ -1344,6 +1364,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 06"
@@ -1360,6 +1381,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1369,6 +1391,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 07"
@@ -1386,6 +1409,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1394,6 +1418,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 08"
@@ -1413,6 +1438,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 09"
@@ -1437,6 +1463,7 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
         ]) ;
@@ -1462,6 +1489,7 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::integer(4),
@@ -1478,6 +1506,7 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::integer(7),
@@ -1503,6 +1532,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
+                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1516,6 +1546,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
+                free: vec![],
             },
             Object::integer(41),
             Object::integer(40),
@@ -1536,16 +1567,18 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
-                    Op::Constant(10),
+                    Op::Closure(10, 0),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Return,
                 ]),
                 locals: 1,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 13"
@@ -1562,6 +1595,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 1,
+                free: vec![],
             },
             Object::integer(42),
         ]) ;
@@ -1581,6 +1615,7 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 2,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1604,6 +1639,7 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1627,6 +1663,7 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1654,6 +1691,7 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1674,6 +1712,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::integer(7),
@@ -1708,6 +1747,7 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1730,6 +1770,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(3),
             Object::integer(45),
@@ -1760,6 +1801,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function call 20"

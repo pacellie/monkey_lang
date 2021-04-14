@@ -34,6 +34,7 @@ pub enum Object {
         bytes: Vec<u8>,
         locals: usize,
         params: usize,
+        free: Vec<Reference>,
     },
     Builtin(Builtin),
 }

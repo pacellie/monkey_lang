@@ -1,10 +1,8 @@
 use crate::builtin::Builtin;
-use crate::compiler::{Op, Reference};
+use crate::compiler::{symbol, Op, Reference, SymbolTable};
 use crate::error::{MonkeyError, Result};
 use crate::lexer::Token;
 use crate::parser::ast::*;
-use crate::symbol;
-use crate::symbol::*;
 use crate::vm::Object;
 
 use std::mem;
@@ -262,8 +260,9 @@ impl Compiler {
                     bytes,
                     locals,
                     params: params.len(),
+                    free: vec![],
                 });
-                self.emit(Op::Constant(reference));
+                self.emit(Op::Closure(reference, 0));
             }
             Expression::Call { expr, args } => {
                 self.compile_expr(expr)?;
@@ -392,6 +391,13 @@ impl Compiler {
                 self.current_scope().bytes.push(Op::GETBUILTIN);
                 self.current_scope().bytes.push(builtin);
             }
+            Op::Closure(reference, free) => {
+                self.current_scope().bytes.push(Op::CLOSURE);
+                self.current_scope()
+                    .bytes
+                    .extend_from_slice(&reference.to_be_bytes());
+                self.current_scope().bytes.push(free);
+            }
         }
     }
 }
@@ -487,6 +493,12 @@ mod tests {
                         let builtin = self[i + 1];
                         ops.push(Op::GetBuiltin(builtin));
                         i += 1;
+                    }
+                    Op::CLOSURE => {
+                        let reference = u16::from_be_bytes([self[i + 1], self[i + 2]]);
+                        let free = self[i + 3];
+                        ops.push(Op::Closure(reference, free));
+                        i += 3;
                     }
                     _ => {
                         return None;
@@ -955,7 +967,7 @@ mod tests {
     #[test_case(
         "fn() { return 5 + 10; }",
         vec![
-            Op::Constant(11),
+            Op::Closure(11, 0),
         ],
         heap(vec![
             Object::integer(5),
@@ -970,6 +982,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function literal 01"
@@ -977,7 +990,7 @@ mod tests {
     #[test_case(
         "fn() { 5 + 10 }",
         vec![
-            Op::Constant(11),
+            Op::Closure(11, 0),
         ],
         heap(vec![
             Object::integer(5),
@@ -991,6 +1004,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function literal 02"
@@ -998,7 +1012,7 @@ mod tests {
     #[test_case(
         "fn() { 5; 10 }",
         vec![
-            Op::Constant(11),
+            Op::Closure(11, 0),
         ],
         heap(vec![
             Object::integer(5),
@@ -1012,6 +1026,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function literal 03"
@@ -1019,7 +1034,7 @@ mod tests {
     #[test_case(
         "fn() { }",
         vec![
-            Op::Constant(9),
+            Op::Closure(9, 0),
         ],
         heap(vec![
             Object::Function {
@@ -1029,6 +1044,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "function literal 04"
@@ -1036,7 +1052,7 @@ mod tests {
     #[test_case(
         "fn() { 42 }()",
         vec![
-            Op::Constant(10),
+            Op::Closure(10, 0),
             Op::Call(0),
         ],
         heap(vec![
@@ -1048,6 +1064,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "call expr 01"
@@ -1055,7 +1072,7 @@ mod tests {
     #[test_case(
         "let f = fn() { 42 }; f()",
         vec![
-            Op::Constant(10),
+            Op::Closure(10, 0),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::Call(0),
@@ -1069,6 +1086,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "call expr 02"
@@ -1076,9 +1094,9 @@ mod tests {
     #[test_case(
         "let f = fn() { 1 }; let g = fn() { 2 }; f() + g()",
         vec![
-            Op::Constant(10),
+            Op::Closure(10, 0),
             Op::SetGlobal(0),
-            Op::Constant(12),
+            Op::Closure(12, 0),
             Op::SetGlobal(1),
             Op::GetGlobal(0),
             Op::Call(0),
@@ -1095,6 +1113,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1104,6 +1123,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "call expr 03"
@@ -1111,7 +1131,7 @@ mod tests {
     #[test_case(
         "let f = fn(x) { x }; f(42)",
         vec![
-            Op::Constant(9),
+            Op::Closure(9, 0),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::Constant(10),
@@ -1125,6 +1145,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 1,
+                free: vec![],
             },
             Object::integer(42),
         ]) ;
@@ -1133,7 +1154,7 @@ mod tests {
     #[test_case(
         "let f = fn(x, y, z) { x; y; z }; f(1, 2, 3)",
         vec![
-            Op::Constant(9),
+            Op::Closure(9, 0),
             Op::SetGlobal(0),
             Op::GetGlobal(0),
             Op::Constant(10),
@@ -1153,6 +1174,7 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 3,
+                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1165,7 +1187,7 @@ mod tests {
         vec![
             Op::Constant(9),
             Op::SetGlobal(0),
-            Op::Constant(10),
+            Op::Closure(10, 0),
         ],
         heap(vec![
             Object::integer(42),
@@ -1176,6 +1198,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "let stmt scopes 01"
@@ -1183,7 +1206,7 @@ mod tests {
     #[test_case(
         "fn() { let x = 42; x }",
         vec![
-            Op::Constant(10),
+            Op::Closure(10, 0),
         ],
         heap(vec![
             Object::integer(42),
@@ -1196,6 +1219,7 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "let stmt scopes 02"
@@ -1203,7 +1227,7 @@ mod tests {
     #[test_case(
         "fn() { let x = 1; let y = 2; x + y }",
         vec![
-            Op::Constant(11),
+            Op::Closure(11, 0),
         ],
         heap(vec![
             Object::integer(1),
@@ -1221,6 +1245,7 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
+                free: vec![],
             },
         ]) ;
         "let stmt scopes 03"
@@ -1246,7 +1271,7 @@ mod tests {
     #[test_case(
         "fn() { len([]) }",
         vec![
-            Op::Constant(9),
+            Op::Closure(9, 0),
         ],
         heap(vec![
             Object::Function {
@@ -1258,6 +1283,7 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
+                free: vec![],
             }
         ]) ;
         "builtins 02"

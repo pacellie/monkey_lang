@@ -1,8 +1,8 @@
 use crate::compiler::Compiler;
+use crate::compiler::SymbolTable;
 use crate::interpreter::{eval_program, Environment};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::symbol::SymbolTable;
 use crate::vm::VirtualMachine;
 
 use std::cell::RefCell;
