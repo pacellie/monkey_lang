@@ -9,11 +9,13 @@ use itertools::*;
 pub enum Scope {
     Global,
     Local,
+    Free,
     Builtin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
+    pub name: String,
     pub scope: Scope,
     pub index: u16,
 }
@@ -28,6 +30,8 @@ impl fmt::Display for Symbol {
 pub struct SymbolTable {
     pub outer: Option<Box<SymbolTable>>,
     store: HashMap<String, Symbol>,
+    pub free_symbols: Vec<Symbol>,
+    pub cnt: u16,
 }
 
 impl SymbolTable {
@@ -35,6 +39,8 @@ impl SymbolTable {
         SymbolTable {
             outer: None,
             store: HashMap::new(),
+            free_symbols: vec![],
+            cnt: 0,
         }
     }
 
@@ -43,6 +49,7 @@ impl SymbolTable {
 
         for (index, builtin) in Builtin::builtins().iter().enumerate() {
             let symbol = Symbol {
+                name: builtin.to_string(),
                 scope: Scope::Builtin,
                 index: index as u16,
             };
@@ -50,40 +57,76 @@ impl SymbolTable {
             store.insert(builtin.to_string(), symbol);
         }
 
-        SymbolTable { outer: None, store }
-    }
-
-    pub fn new(outer: SymbolTable) -> SymbolTable {
         SymbolTable {
-            outer: Some(Box::new(outer)),
-            store: HashMap::new(),
+            outer: None,
+            store,
+            free_symbols: vec![],
+            cnt: 0,
         }
     }
 
-    pub fn size(&self) -> usize {
-        self.store.len()
+    pub fn enclose(outer: SymbolTable) -> SymbolTable {
+        SymbolTable {
+            outer: Some(Box::new(outer)),
+            store: HashMap::new(),
+            free_symbols: vec![],
+            cnt: 0,
+        }
     }
 
     pub fn define(&mut self, name: &str) -> &Symbol {
         let symbol = if self.outer.is_none() {
             Symbol {
+                name: name.to_string(),
                 scope: Scope::Global,
-                index: self.store.len() as u16 - 6,
+                index: self.cnt,
             }
         } else {
             Symbol {
+                name: name.to_string(),
                 scope: Scope::Local,
-                index: self.store.len() as u16,
+                index: self.cnt,
             }
         };
+
+        self.cnt += 1;
 
         self.store.entry(name.to_string()).or_insert(symbol)
     }
 
-    pub fn resolve(&self, name: &str) -> Option<&Symbol> {
+    fn define_free(&mut self, symbol: Symbol) -> Symbol {
+        let name = symbol.name.clone();
+
+        self.free_symbols.push(symbol);
+
+        let symbol = Symbol {
+            name: name.clone(),
+            scope: Scope::Free,
+            index: (self.free_symbols.len() - 1) as u16,
+        };
+
+        self.store.entry(name).or_insert(symbol.clone());
+
+        symbol
+    }
+
+    pub fn resolve(&mut self, name: &str) -> Option<Symbol> {
         self.store
             .get(name)
-            .or_else(|| self.outer.as_ref().and_then(|outer| outer.resolve(name)))
+            .map(|symbol| symbol.clone())
+            .or_else(|| {
+                if let Some(outer) = self.outer.as_mut() {
+                    outer.resolve(name).and_then(|symbol| {
+                        if symbol.scope == Scope::Global || symbol.scope == Scope::Builtin {
+                            Some(symbol)
+                        } else {
+                            Some(self.define_free(symbol))
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -106,67 +149,176 @@ mod tests {
 
     #[test]
     fn define_resolve_0() {
-        let mut tbl = SymbolTable::toplevel();
-        let a0 = tbl.define("a").clone();
-        let b0 = tbl.define("b").clone();
+        let mut global = SymbolTable::toplevel();
+        let _ = global.define("a");
+        let _ = global.define("b");
 
-        let a1 = tbl.resolve("a");
-        let b1 = tbl.resolve("b");
-
-        let a = Symbol {
+        let a0 = Symbol {
+            name: "a".to_string(),
             scope: Scope::Global,
             index: 0,
         };
-        let b = Symbol {
+        let b0 = Symbol {
+            name: "b".to_string(),
             scope: Scope::Global,
             index: 1,
         };
 
-        assert!(a0 == a);
-        assert!(b0 == b);
-        assert!(a1.unwrap() == &a);
-        assert!(b1.unwrap() == &b)
+        let a1 = global.resolve("a").unwrap();
+        let b1 = global.resolve("b").unwrap();
+
+        assert_eq!(a0, a1);
+        assert_eq!(b0, b1)
     }
 
     #[test]
     fn define_resolve_1() {
         let mut tbl = SymbolTable::toplevel();
-        let a0 = tbl.define("a").clone();
-        let b0 = tbl.define("b").clone();
+        let _ = tbl.define("a");
+        let _ = tbl.define("b");
 
-        let mut tbl = SymbolTable::new(tbl);
-        let c0 = tbl.define("c").clone();
-        let d0 = tbl.define("d").clone();
+        let mut tbl = SymbolTable::enclose(tbl);
+        let _ = tbl.define("c");
+        let _ = tbl.define("d");
 
-        let a1 = tbl.resolve("a");
-        let b1 = tbl.resolve("b");
-        let c1 = tbl.resolve("c");
-        let d1 = tbl.resolve("d");
-
-        let a = Symbol {
+        let a0 = Symbol {
+            name: "a".to_string(),
             scope: Scope::Global,
             index: 0,
         };
-        let b = Symbol {
+        let b0 = Symbol {
+            name: "b".to_string(),
             scope: Scope::Global,
             index: 1,
         };
-        let c = Symbol {
+        let c0 = Symbol {
+            name: "c".to_string(),
             scope: Scope::Local,
             index: 0,
         };
-        let d = Symbol {
+        let d0 = Symbol {
+            name: "d".to_string(),
             scope: Scope::Local,
             index: 1,
         };
 
-        assert!(a0 == a);
-        assert!(b0 == b);
-        assert!(a1.unwrap() == &a);
-        assert!(b1.unwrap() == &b);
-        assert!(c0 == c);
-        assert!(d0 == d);
-        assert!(c1.unwrap() == &c);
-        assert!(d1.unwrap() == &d)
+        let a1 = tbl.resolve("a").unwrap();
+        let b1 = tbl.resolve("b").unwrap();
+        let c1 = tbl.resolve("c").unwrap();
+        let d1 = tbl.resolve("d").unwrap();
+
+        assert_eq!(a0, a1);
+        assert_eq!(b0, b1);
+        assert_eq!(c0, c1);
+        assert_eq!(d0, d1)
+    }
+
+    #[test]
+    fn define_resolve_2() {
+        let mut global = SymbolTable::toplevel();
+        let _ = global.define("a");
+        let _ = global.define("b");
+
+        let mut fst_local = SymbolTable::enclose(global);
+        let _ = fst_local.define("c");
+        let _ = fst_local.define("d");
+
+        let mut snd_local = SymbolTable::enclose(fst_local);
+        let _ = snd_local.define("e");
+        let _ = snd_local.define("f");
+
+        let a0 = Symbol {
+            name: "a".to_string(),
+            scope: Scope::Global,
+            index: 0,
+        };
+        let b0 = Symbol {
+            name: "b".to_string(),
+            scope: Scope::Global,
+            index: 1,
+        };
+        let c0 = Symbol {
+            name: "c".to_string(),
+            scope: Scope::Free,
+            index: 0,
+        };
+        let d0 = Symbol {
+            name: "d".to_string(),
+            scope: Scope::Free,
+            index: 1,
+        };
+        let e0 = Symbol {
+            name: "e".to_string(),
+            scope: Scope::Local,
+            index: 0,
+        };
+        let f0 = Symbol {
+            name: "f".to_string(),
+            scope: Scope::Local,
+            index: 1,
+        };
+
+        let a1 = snd_local.resolve("a").unwrap();
+        let b1 = snd_local.resolve("b").unwrap();
+        let c1 = snd_local.resolve("c").unwrap();
+        let d1 = snd_local.resolve("d").unwrap();
+        let e1 = snd_local.resolve("e").unwrap();
+        let f1 = snd_local.resolve("f").unwrap();
+
+        assert_eq!(a0, a1);
+        assert_eq!(b0, b1);
+        assert_eq!(c0, c1);
+        assert_eq!(d0, d1);
+        assert_eq!(e0, e1);
+        assert_eq!(f0, f1)
+    }
+
+    #[test]
+    fn define_resolve_3() {
+        let mut global = SymbolTable::toplevel();
+        let _ = global.define("a");
+
+        let mut fst_local = SymbolTable::enclose(global);
+        let _ = fst_local.define("c");
+
+        let mut snd_local = SymbolTable::enclose(fst_local);
+        let _ = snd_local.define("e");
+        let _ = snd_local.define("f");
+
+        let a0 = Symbol {
+            name: "a".to_string(),
+            scope: Scope::Global,
+            index: 0,
+        };
+        let c0 = Symbol {
+            name: "c".to_string(),
+            scope: Scope::Free,
+            index: 0,
+        };
+        let e0 = Symbol {
+            name: "e".to_string(),
+            scope: Scope::Local,
+            index: 0,
+        };
+        let f0 = Symbol {
+            name: "f".to_string(),
+            scope: Scope::Local,
+            index: 1,
+        };
+
+        let a1 = snd_local.resolve("a").unwrap();
+        let c1 = snd_local.resolve("c").unwrap();
+        let e1 = snd_local.resolve("e").unwrap();
+        let f1 = snd_local.resolve("f").unwrap();
+
+        let b = snd_local.resolve("b");
+        let d = snd_local.resolve("d");
+
+        assert_eq!(a0, a1);
+        assert_eq!(c0, c1);
+        assert_eq!(e0, e1);
+        assert_eq!(f0, f1);
+        assert!(b.is_none());
+        assert!(d.is_none());
     }
 }

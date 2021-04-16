@@ -4,6 +4,7 @@ pub type Reference = u16;
 pub type Address = u16;
 pub type GlobalBinding = u16;
 pub type LocalBinding = u8;
+pub type FreeBinding = u8;
 pub type N = u16;
 pub type M = u8;
 pub type Builtin = u8;
@@ -60,6 +61,7 @@ pub enum Op {
 
     // Closures
     Closure(Reference, M),
+    GetFree(FreeBinding),
 }
 
 #[rustfmt::skip]
@@ -103,6 +105,7 @@ impl Op {
     pub const GETBUILTIN: u8 = 26;
 
     pub const CLOSURE   : u8 = 27;
+    pub const GETFREE   : u8 = 28;
 
     pub fn format(op: u8) -> String {
         match op {
@@ -169,6 +172,7 @@ impl fmt::Display for Op {
             Op::SetLocal(binding) => write!(f, "SetLocal {}", binding),
             Op::GetBuiltin(builtin) => write!(f, "GetBuiltin {}", builtin),
             Op::Closure(reference, free) => write!(f, "Closure {} {}", reference, free),
+            Op::GetFree(binding) => write!(f, "GetFree {}", binding),
         }
     }
 }

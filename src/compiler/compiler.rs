@@ -1,5 +1,5 @@
 use crate::builtin::Builtin;
-use crate::compiler::{symbol, Op, Reference, SymbolTable};
+use crate::compiler::{symbol, Op, Reference, Symbol, SymbolTable};
 use crate::error::{MonkeyError, Result};
 use crate::lexer::Token;
 use crate::parser::ast::*;
@@ -54,7 +54,7 @@ impl Compiler {
 
     fn enter_scope(&mut self) {
         self.symbol_table =
-            SymbolTable::new(mem::replace(&mut self.symbol_table, SymbolTable::empty()));
+            SymbolTable::enclose(mem::replace(&mut self.symbol_table, SymbolTable::empty()));
         self.scopes.push(Scope { bytes: vec![] });
         self.scope += 1;
     }
@@ -103,11 +103,11 @@ impl Compiler {
     fn compile_stmt(&mut self, stmt: &Statement) -> Result<()> {
         match stmt {
             Statement::Let { name, expr } => {
-                self.compile_expr(expr)?;
-
                 let symbol = self.symbol_table.define(name);
                 let scope = symbol.scope;
                 let index = symbol.index;
+
+                self.compile_expr(expr)?;
 
                 match scope {
                     symbol::Scope::Local => {
@@ -116,7 +116,7 @@ impl Compiler {
                     symbol::Scope::Global => {
                         self.emit(Op::SetGlobal(index));
                     }
-                    symbol::Scope::Builtin => (),
+                    _ => (),
                 }
             }
             Statement::Return(expr) => {
@@ -143,20 +143,7 @@ impl Compiler {
                         Ok(symbol)
                     })?;
 
-                let scope = symbol.scope;
-                let index = symbol.index;
-
-                match scope {
-                    symbol::Scope::Local => {
-                        self.emit(Op::GetLocal(index as u8));
-                    }
-                    symbol::Scope::Global => {
-                        self.emit(Op::GetGlobal(index));
-                    }
-                    symbol::Scope::Builtin => {
-                        self.emit(Op::GetBuiltin(index as u8));
-                    }
-                }
+                self.load_symbol(symbol);
             }
             Expression::Integer(i) => {
                 let reference = self.allocate(Object::integer(*i));
@@ -246,7 +233,8 @@ impl Compiler {
 
                 self.compile_block_stmt(body)?;
 
-                let locals = self.symbol_table.size();
+                let free_symbols = self.symbol_table.free_symbols.clone();
+                let locals = self.symbol_table.cnt as usize;
 
                 let mut bytes = self.leave_scope();
 
@@ -256,13 +244,18 @@ impl Compiler {
                 }
                 bytes.push(Op::RETURN);
 
+                let num_free_symbols = free_symbols.len() as u8;
+                for symbol in free_symbols {
+                    self.load_symbol(symbol);
+                }
+
                 let reference = self.allocate(Object::Function {
                     bytes,
                     locals,
                     params: params.len(),
-                    free: vec![],
                 });
-                self.emit(Op::Closure(reference, 0));
+
+                self.emit(Op::Closure(reference, num_free_symbols));
             }
             Expression::Call { expr, args } => {
                 self.compile_expr(expr)?;
@@ -281,6 +274,15 @@ impl Compiler {
         }
 
         Ok(())
+    }
+
+    fn load_symbol(&mut self, symbol: Symbol) {
+        match symbol.scope {
+            symbol::Scope::Global => self.emit(Op::GetGlobal(symbol.index)),
+            symbol::Scope::Local => self.emit(Op::GetLocal(symbol.index as u8)),
+            symbol::Scope::Builtin => self.emit(Op::GetBuiltin(symbol.index as u8)),
+            symbol::Scope::Free => self.emit(Op::GetFree(symbol.index as u8)),
+        };
     }
 
     pub fn encode(&mut self, op: Op) {
@@ -398,6 +400,10 @@ impl Compiler {
                     .extend_from_slice(&reference.to_be_bytes());
                 self.current_scope().bytes.push(free);
             }
+            Op::GetFree(binding) => {
+                self.current_scope().bytes.push(Op::GETFREE);
+                self.current_scope().bytes.push(binding);
+            }
         }
     }
 }
@@ -499,6 +505,11 @@ mod tests {
                         let free = self[i + 3];
                         ops.push(Op::Closure(reference, free));
                         i += 3;
+                    }
+                    Op::GETFREE => {
+                        let binding = self[i + 1];
+                        ops.push(Op::GetFree(binding));
+                        i += 1;
                     }
                     _ => {
                         return None;
@@ -982,7 +993,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "function literal 01"
@@ -1004,7 +1014,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "function literal 02"
@@ -1026,7 +1035,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "function literal 03"
@@ -1044,7 +1052,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "function literal 04"
@@ -1064,7 +1071,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "call expr 01"
@@ -1086,7 +1092,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "call expr 02"
@@ -1113,7 +1118,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1123,7 +1127,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "call expr 03"
@@ -1145,7 +1148,6 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 1,
-                free: vec![],
             },
             Object::integer(42),
         ]) ;
@@ -1174,7 +1176,6 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 3,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1198,7 +1199,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "let stmt scopes 01"
@@ -1219,7 +1219,6 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "let stmt scopes 02"
@@ -1245,7 +1244,6 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
-                free: vec![],
             },
         ]) ;
         "let stmt scopes 03"
@@ -1283,10 +1281,141 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             }
         ]) ;
         "builtins 02"
+    )]
+    #[test_case(
+        "fn(a) { fn(b) { a + b } }",
+        vec![
+            Op::Closure(10, 0),
+        ],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Closure(9, 1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+        ]) ;
+        "closures 01"
+    )]
+    #[test_case(
+        "fn(a) { fn(b) { fn(c) { a + b + c } } }",
+        vec![
+            Op::Closure(11, 0),
+        ],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetFree(1),
+                    Op::Add,
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Closure(9, 2),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Closure(10, 1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+        ]) ;
+        "closures 02"
+    )]
+    #[test_case(
+        "let g = 1;\n\
+         fn() {\n\
+             let a = 2;\n\
+             fn() {\n\
+                 let b = 3;\n\
+                 fn() {\n\
+                     let c = 4;\n\
+                     g + a + b + c\n\
+                 }\n\
+             }\n\
+         }",
+        vec![
+            Op::Constant(9),
+            Op::SetGlobal(0),
+            Op::Closure(15, 0),
+        ],
+        heap(vec![
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(4),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(12),
+                    Op::SetLocal(0),
+                    Op::GetGlobal(0),
+                    Op::GetFree(0),
+                    Op::Add,
+                    Op::GetFree(1),
+                    Op::Add,
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(11),
+                    Op::SetLocal(0),
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Closure(13, 2),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Constant(10),
+                    Op::SetLocal(0),
+                    Op::GetLocal(0),
+                    Op::Closure(14, 1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 0,
+            },
+        ]) ;
+        "closures 03"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

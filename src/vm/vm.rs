@@ -15,13 +15,19 @@ const TRUE: u16 = 8;
 
 pub struct Frame {
     bytes: Vec<u8>,
+    frees: Vec<Reference>,
     pc: i32,
     fp: usize,
 }
 
 impl Frame {
-    pub fn new(bytes: Vec<u8>, fp: usize) -> Frame {
-        Frame { bytes, pc: -1, fp }
+    pub fn new(bytes: Vec<u8>, frees: Vec<Reference>, fp: usize) -> Frame {
+        Frame {
+            bytes,
+            frees,
+            pc: -1,
+            fp,
+        }
     }
 }
 
@@ -36,11 +42,11 @@ pub struct VirtualMachine {
 
 impl VirtualMachine {
     pub fn new(byte_code: ByteCode) -> VirtualMachine {
-        let mut main_frame = Frame::new(byte_code.bytes, 0);
+        let mut main_frame = Frame::new(byte_code.bytes, vec![], 0);
         main_frame.pc = 0;
         let mut frames: Vec<_> = vec![0; FRAMES_SIZE]
             .iter()
-            .map(|_| Frame::new(vec![], 0))
+            .map(|_| Frame::new(vec![], vec![], 0))
             .collect();
         frames[0] = main_frame;
 
@@ -151,6 +157,7 @@ impl VirtualMachine {
                 Op::GETLOCAL => self.get_local()?,
                 Op::GETBUILTIN => self.get_builtin()?,
                 Op::CLOSURE => self.closure()?,
+                Op::GETFREE => self.get_free()?,
                 _ => {
                     return Err(MonkeyError::RuntimeError(
                         "invalid bytecode format.".to_string(),
@@ -388,31 +395,29 @@ impl VirtualMachine {
         let obj = self.dereference(reference)?;
 
         match obj.clone() {
-            Object::Function {
-                bytes,
-                locals,
-                params,
-                free,
-            } => self.call_function(bytes, locals, params, n_args),
+            Object::Closure { fun, frees } => self.call_closure(fun, frees, n_args),
             Object::Builtin(builtin) => self.call_builtin(builtin, n_args),
             _ => Err(MonkeyError::type_mismatch(format!("{}(...)", obj))),
         }
     }
 
-    fn call_function(
-        &mut self,
-        bytes: Vec<u8>,
-        locals: usize,
-        params: usize,
-        n_args: usize,
-    ) -> Result<()> {
-        if n_args == params {
-            let frame = Frame::new(bytes, self.sp - n_args);
-            self.sp = frame.fp + locals;
-            self.push_frame(frame);
-            Ok(())
-        } else {
-            Err(MonkeyError::wrong_number_of_args(params, n_args))
+    fn call_closure(&mut self, fun: Reference, frees: Vec<Reference>, n_args: usize) -> Result<()> {
+        match self.dereference(fun)? {
+            Object::Function {
+                bytes,
+                locals,
+                params,
+            } => {
+                if n_args == *params {
+                    let frame = Frame::new(bytes.clone(), frees, self.sp - n_args);
+                    self.sp = frame.fp + locals;
+                    self.push_frame(frame);
+                    Ok(())
+                } else {
+                    Err(MonkeyError::wrong_number_of_args(*params, n_args))
+                }
+            }
+            obj => Err(MonkeyError::type_mismatch(format!("{}(...)", obj))),
         }
     }
 
@@ -547,12 +552,29 @@ impl VirtualMachine {
     }
 
     fn closure(&mut self) -> Result<()> {
-        let reference = self.read_u16();
+        let fun = self.read_u16();
         *self.pc_mut() += 2;
 
-        let free = self.read_u8();
+        let n_free = self.read_u8() as usize;
         *self.pc_mut() += 1;
 
+        let mut frees = vec![0; n_free];
+        for i in 0..n_free {
+            frees[i] = self.stack[self.sp - n_free + i];
+        }
+        self.sp = self.sp - n_free;
+
+        let closure = Object::Closure { fun, frees };
+        let reference = self.reference(closure);
+
+        self.push(reference)
+    }
+
+    fn get_free(&mut self) -> Result<()> {
+        let index = self.read_u8() as usize;
+        *self.pc_mut() += 1;
+
+        let reference = self.frame().frees[index];
         self.push(reference)
     }
 }
@@ -1214,8 +1236,8 @@ mod tests {
     )]
     #[test_case(
         "let f = fn() { 5 + 10 }; f()",
-        vec![12],
-        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![13],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(5),
             Object::integer(10),
@@ -1228,7 +1250,10 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
             },
             Object::integer(15),
         ]) ;
@@ -1236,8 +1261,8 @@ mod tests {
     )]
     #[test_case(
         "let f = fn() { 1 }; let g = fn() { 2 }; f() + g()",
-        vec![13],
-        vec![10, 12, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![15],
+        vec![13, 14, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::Function {
@@ -1247,7 +1272,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1257,7 +1281,14 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
             },
             Object::integer(3),
         ]) ;
@@ -1265,8 +1296,8 @@ mod tests {
     )]
     #[test_case(
         "let f = fn() { 1 }; let g = fn() { f() + 2 }; let h = fn() { g() + 3 }; h()",
-        vec![16],
-        vec![10, 12, 14, 0, 0, 0, 0, 0, 0, 0],
+        vec![19],
+        vec![15, 16, 17, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::Function {
@@ -1276,7 +1307,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1289,7 +1319,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::integer(3),
             Object::Function {
@@ -1302,7 +1331,18 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 14,
+                frees: vec![],
             },
             Object::integer(3),
             Object::integer(6),
@@ -1312,7 +1352,7 @@ mod tests {
     #[test_case(
         "let f = fn() { return 1; 2 }; f()",
         vec![9],
-        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::integer(2),
@@ -1325,7 +1365,10 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
             },
         ]) ;
         "function call 04"
@@ -1333,7 +1376,7 @@ mod tests {
     #[test_case(
         "let f = fn() { return 1; return 2; }; f()",
         vec![9],
-        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::integer(2),
@@ -1347,7 +1390,10 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
             },
         ]) ;
         "function call 05"
@@ -1355,7 +1401,7 @@ mod tests {
     #[test_case(
         "let f = fn() { }; f()",
         vec![6],
-        vec![9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![10, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1364,7 +1410,10 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
             },
         ]) ;
         "function call 06"
@@ -1372,7 +1421,7 @@ mod tests {
     #[test_case(
         "let f = fn() { }; let g = fn() { f() }; g()",
         vec![6],
-        vec![9, 10, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![11, 12, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1381,7 +1430,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1391,7 +1439,14 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
             },
         ]) ;
         "function call 07"
@@ -1399,7 +1454,7 @@ mod tests {
     #[test_case(
         "let f = fn() { 1 }; let g = fn() { f }; g()()",
         vec![9],
-        vec![10, 11, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![12, 13, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::Function {
@@ -1409,7 +1464,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1418,7 +1472,14 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
             },
         ]) ;
         "function call 08"
@@ -1426,7 +1487,7 @@ mod tests {
     #[test_case(
         "let f = fn() { let x = 1; x }; f()",
         vec![9],
-        vec![10, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::Function {
@@ -1438,15 +1499,18 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
             },
         ]) ;
         "function call 09"
     )]
     #[test_case(
         "let f = fn() { let x = 1; let y = 2; x + y }; f()",
-        vec![12],
-        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![13],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::integer(2),
@@ -1463,7 +1527,10 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
             },
             Object::integer(3),
         ]) ;
@@ -1471,8 +1538,8 @@ mod tests {
     )]
     #[test_case(
         "let f = fn() { let x = 1; let y = 2; x + y }; let g = fn() { let a = 3; let b = 4; a + b }; f() + g()",
-        vec![17],
-        vec![11, 14, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![19],
+        vec![15, 16, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::integer(2),
@@ -1489,7 +1556,6 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
-                free: vec![],
             },
             Object::integer(3),
             Object::integer(4),
@@ -1506,7 +1572,14 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 14,
+                frees: vec![],
             },
             Object::integer(3),
             Object::integer(7),
@@ -1516,8 +1589,8 @@ mod tests {
     )]
     #[test_case(
         "let a = 42; let f = fn() { let x = 1; a - x }; let g = fn() { let x = 2; a - x }; f() + g()",
-        vec![16],
-        vec![9, 11, 13, 0, 0, 0, 0, 0, 0, 0],
+        vec![18],
+        vec![9, 14, 15, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(42),
             Object::integer(1),
@@ -1532,7 +1605,6 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
-                free: vec![],
             },
             Object::integer(2),
             Object::Function {
@@ -1546,7 +1618,14 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 13,
+                frees: vec![],
             },
             Object::integer(41),
             Object::integer(40),
@@ -1557,7 +1636,7 @@ mod tests {
     #[test_case(
         "let f = fn() { let g = fn() { 1 }; g }; f()()",
         vec![9],
-        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(1),
             Object::Function {
@@ -1567,7 +1646,6 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
             },
             Object::Function {
                 bytes: encode(vec![
@@ -1578,7 +1656,14 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
             },
         ]) ;
         "function call 13"
@@ -1586,7 +1671,7 @@ mod tests {
     #[test_case(
         "let f = fn(x) { x }; f(42)",
         vec![10],
-        vec![9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1595,16 +1680,19 @@ mod tests {
                 ]),
                 locals: 1,
                 params: 1,
-                free: vec![],
             },
             Object::integer(42),
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
         ]) ;
         "function call 14"
     )]
     #[test_case(
         "let f = fn(x, y) { x + y }; f(1, 2)",
-        vec![12],
-        vec![9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![13],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1615,18 +1703,21 @@ mod tests {
                 ]),
                 locals: 2,
                 params: 2,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
             Object::integer(3),
         ]) ;
         "function call 15"
     )]
     #[test_case(
         "let f = fn(x, y) { let z = x + y; z }; f(1, 2)",
-        vec![12],
-        vec![9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![13],
+        vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1639,18 +1730,21 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
             Object::integer(3),
         ]) ;
         "function call 16"
     )]
     #[test_case(
         "let f = fn(x, y) { let z = x + y; z }; f(1, 2) + f(3, 4)",
-        vec![16],
-        vec![9, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![17],
+        vec![14, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1663,12 +1757,15 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
             Object::integer(3),
             Object::integer(4),
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
             Object::integer(3),
             Object::integer(7),
             Object::integer(10),
@@ -1677,8 +1774,8 @@ mod tests {
     )]
     #[test_case(
         "let f = fn(x, y) { let z = x + y; z }; let g = fn() { f(1, 2) + f(3, 4) }; g()",
-        vec![17],
-        vec![9, 14, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![19],
+        vec![15, 16, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
                 bytes: encode(vec![
@@ -1691,7 +1788,6 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1712,7 +1808,14 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 14,
+                frees: vec![],
             },
             Object::integer(3),
             Object::integer(7),
@@ -1730,8 +1833,8 @@ mod tests {
              f(1, 2) + f(3, 4) + a\n\
          };\n\
          g() + a",
-        vec![22],
-        vec![9, 10, 15, 0, 0, 0, 0, 0, 0, 0],
+        vec![24],
+        vec![9, 16, 17, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(42),
             Object::Function {
@@ -1747,7 +1850,6 @@ mod tests {
                 ]),
                 locals: 3,
                 params: 2,
-                free: vec![],
             },
             Object::integer(1),
             Object::integer(2),
@@ -1770,7 +1872,14 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 15,
+                frees: vec![],
             },
             Object::integer(3),
             Object::integer(45),
@@ -1785,7 +1894,7 @@ mod tests {
     #[test_case(
         "let a = 42; let f = fn() { if(false) { 1 } else { 0 } }; f()",
         vec![11],
-        vec![9, 12, 0, 0, 0, 0, 0, 0, 0, 0],
+        vec![9, 13, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::integer(42),
             Object::integer(1),
@@ -1801,7 +1910,10 @@ mod tests {
                 ]),
                 locals: 0,
                 params: 0,
-                free: vec![],
+            },
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
             },
         ]) ;
         "function call 20"
@@ -1907,6 +2019,399 @@ mod tests {
         ]) ;
         "builtins 10"
     )]
+    #[test_case(
+        "let f = fn(a) {\n\
+            fn() { a }\n\
+        };\n\
+        let g = f(42);\n\
+        g()",
+        vec![11],
+        vec![12, 13, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Closure(9, 1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(42),
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![11],
+            },
+        ]) ;
+        "closures 01"
+    )]
+    #[test_case(
+        "let f = fn(a, b) {\n\
+            fn(c) { a + b + c }\n\
+        };\n\
+        let g = f(1, 2);\n\
+        g(3)",
+        vec![17],
+        vec![14, 15, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetFree(1),
+                    Op::Add,
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Closure(9, 2),
+                    Op::Return,
+                ]),
+                locals: 2,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![11, 12],
+            },
+            Object::integer(3),
+            Object::integer(6),
+        ]) ;
+        "closures 02"
+    )]
+    #[test_case(
+        "let f = fn(a, b) {\n\
+            let c = a + b;
+            fn(d) { c + d }\n\
+        };\n\
+        let g = f(1, 2);\n\
+        g(3)",
+        vec![17],
+        vec![14, 16, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::Closure(9, 1),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::Closure {
+                fun: 10,
+                frees: vec![],
+            },
+            Object::integer(3),
+            Object::Closure {
+                fun: 9,
+                frees: vec![15],
+            },
+            Object::integer(6),
+        ]) ;
+        "closures 03"
+    )]
+    #[test_case(
+        "let g = fn(a, b) {
+            let c = a + b;
+            fn(d) {
+                let e = d + c;
+                fn(f) { e + f }
+            }
+        };
+        let h = g(1, 2);
+        let i = h(3);
+        i(8)",
+        vec![21],
+        vec![16, 18, 20, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetFree(0),
+                    Op::Add,
+                    Op::SetLocal(1),
+                    Op::GetLocal(1),
+                    Op::Closure(9, 1),
+                    Op::Return,
+                ]),
+                locals: 2,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::GetLocal(1),
+                    Op::Add,
+                    Op::SetLocal(2),
+                    Op::GetLocal(2),
+                    Op::Closure(10, 1),
+                    Op::Return,
+                ]),
+                locals: 3,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(8),
+            Object::Closure {
+                fun: 11,
+                frees: vec![],
+            },
+            Object::integer(3),
+            Object::Closure {
+                fun: 10,
+                frees: vec![17],
+            },
+            Object::integer(6),
+            Object::Closure {
+                fun: 9,
+                frees: vec![19],
+            },
+            Object::integer(14),
+        ]) ;
+        "closures 04"
+    )]
+    #[test_case(
+        "let a = 1;\n\
+        let f = fn(b) {\n\
+            fn(c) {\n\
+                fn(d) { a + b + c + d }\n\
+            }\n\
+        };\n\
+        let g = f(2);\n\
+        let h = g(3);\n\
+        h(8)",
+        vec![21],
+        vec![9, 16, 17, 18, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::integer(1),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetGlobal(0),
+                    Op::GetFree(0),
+                    Op::Add,
+                    Op::GetFree(1),
+                    Op::Add,
+                    Op::GetLocal(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::GetLocal(0),
+                    Op::Closure(10, 2),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Closure(11, 1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(2),
+            Object::integer(3),
+            Object::integer(8),
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![13],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![13, 14],
+            },
+            Object::integer(3),
+            Object::integer(6),
+            Object::integer(14),
+        ]) ;
+        "closures 05"
+    )]
+    #[test_case(
+        "let f = fn(a, b) {\n\
+            let g = fn() { a };\n\
+            let h = fn() { b };\n\
+            fn() { g() + h() }\n\
+        };\n\
+        let i = f(1, 2);\n\
+        i()",
+        vec![19],
+        vec![15, 18, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetFree(0),
+                    Op::Call(0),
+                    Op::GetFree(1),
+                    Op::Call(0),
+                    Op::Add,
+                    Op::Return,
+                ]),
+                locals: 0,
+                params: 0,
+            },
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Closure(9, 1),
+                    Op::SetLocal(2),
+                    Op::GetLocal(1),
+                    Op::Closure(10, 1),
+                    Op::SetLocal(3),
+                    Op::GetLocal(2),
+                    Op::GetLocal(3),
+                    Op::Closure(11, 2),
+                    Op::Return,
+                ]),
+                locals: 4,
+                params: 2,
+            },
+            Object::integer(1),
+            Object::integer(2),
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 9,
+                frees: vec![13],
+            },
+            Object::Closure {
+                fun: 10,
+                frees: vec![14],
+            },
+            Object::Closure {
+                fun: 11,
+                frees: vec![16, 17],
+            },
+            Object::integer(3),
+        ]) ;
+        "closures 06"
+    )]
+    #[test_case(
+        "let f = fn(x) {\n\
+            if (x == 0) {\n\
+                0\n\
+            } else {\n\
+                f(x - 1)\n\
+            }\n\
+        };\n\
+        f(1)",
+        vec![10],
+        vec![14, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::integer(0),
+            Object::integer(0),
+            Object::integer(1),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Constant(9),
+                    Op::Eq,
+                    Op::JumpIfNot(15),
+                    Op::Constant(10),
+                    Op::Jump(26),
+                    Op::GetGlobal(0),
+                    Op::GetLocal(0),
+                    Op::Constant(11),
+                    Op::Sub,
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(1),
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
+            },
+            Object::integer(0),
+        ]) ;
+        "recursive closures 01"
+    )]
     fn test(input: &str, stack: Vec<Reference>, globals: Vec<Reference>, heap: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);
@@ -1934,7 +2439,7 @@ mod tests {
     #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)     ; "error 10")]
     #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")       ; "error 11")]
     #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")       ; "error 12")]
-    #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[function]")  ; "error 13")]
+    #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[closure()]") ; "error 13")]
     #[test_case("fn() { 1 }(1)"         , MonkeyError::wrong_number_of_args(0, 1)     ; "error 14")]
     #[test_case("fn(x) { x }()"         , MonkeyError::wrong_number_of_args(1, 0)     ; "error 15")]
     #[test_case("fn(x, y) { x + y }(1)" , MonkeyError::wrong_number_of_args(2, 1)     ; "error 16")]
