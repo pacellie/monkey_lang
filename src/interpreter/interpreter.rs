@@ -77,7 +77,7 @@ fn eval_expr(env: Env, expr: Expression) -> Result<Object> {
             right,
         } => eval_infix_expr(env, *left, operator, *right),
         Expression::If { cond, yes, no } => eval_if_expr(env, *cond, yes, no),
-        Expression::Function { params, body } => Ok(Object::Function { env, params, body }),
+        Expression::Function { params, body, .. } => Ok(Object::Function { env, params, body }),
         Expression::Call { expr, args } => eval_call_expr(env, *expr, args),
         Expression::Index { expr, index } => eval_index_expr(env, *expr, *index),
     }

@@ -224,8 +224,12 @@ impl Compiler {
 
                 self.patch(jump);
             }
-            Expression::Function { params, body } => {
+            Expression::Function { name, params, body } => {
                 self.enter_scope();
+
+                if name != "anonymous" {
+                    self.symbol_table.define_function_name(name);
+                }
 
                 for param in params {
                     self.symbol_table.define(param);
@@ -282,6 +286,7 @@ impl Compiler {
             symbol::Scope::Local => self.emit(Op::GetLocal(symbol.index as u8)),
             symbol::Scope::Builtin => self.emit(Op::GetBuiltin(symbol.index as u8)),
             symbol::Scope::Free => self.emit(Op::GetFree(symbol.index as u8)),
+            symbol::Scope::Function => self.emit(Op::Current),
         };
     }
 
@@ -404,6 +409,9 @@ impl Compiler {
                 self.current_scope().bytes.push(Op::GETFREE);
                 self.current_scope().bytes.push(binding);
             }
+            Op::Current => {
+                self.current_scope().bytes.push(Op::CURRENT);
+            }
         }
     }
 }
@@ -511,6 +519,7 @@ mod tests {
                         ops.push(Op::GetFree(binding));
                         i += 1;
                     }
+                    Op::CURRENT => ops.push(Op::Current),
                     _ => {
                         return None;
                     }
@@ -1416,6 +1425,69 @@ mod tests {
             },
         ]) ;
         "closures 03"
+    )]
+    #[test_case(
+        "let f = fn(x) { f(x) }; f(1)",
+        vec![
+            Op::Closure(9, 0),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Constant(10),
+            Op::Call(1),
+        ],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Current,
+                    Op::GetLocal(0),
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(1),
+        ]) ;
+        "recursive closures 01"
+    )]
+    #[test_case(
+        "let f = fn() {\n\
+            let g = fn(x) { g(x) };\n\
+            g(1)\n\
+        };\n\
+        f()",
+        vec![
+            Op::Closure(11, 0),
+            Op::SetGlobal(0),
+            Op::GetGlobal(0),
+            Op::Call(0),
+        ],
+        heap(vec![
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Current,
+                    Op::GetLocal(0),
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(1),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Closure(9, 0),
+                    Op::SetLocal(0),
+                    Op::GetLocal(0),
+                    Op::Constant(10),
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 0,
+            },
+        ]) ;
+        "recursive closures 02"
     )]
     fn test_compile(input: &str, ops: Vec<Op>, constants: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

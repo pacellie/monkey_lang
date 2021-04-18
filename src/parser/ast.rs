@@ -57,6 +57,7 @@ pub enum Expression {
         no: Option<Block>,
     },
     Function {
+        name: String,
         params: Vec<String>,
         body: Block,
     },
@@ -97,8 +98,14 @@ impl fmt::Display for Expression {
                     .map_or("".to_string(), |block| format!(" else {{ {} }}", block));
                 write!(f, "if ({}) {{ {} }}{}", cond, yes, no)
             }
-            Expression::Function { params, body } => {
-                write!(f, "fn ({}) {{ {} }}", params.iter().join(", "), body)
+            Expression::Function { name, params, body } => {
+                write!(
+                    f,
+                    "fn[{}] ({}) {{ {} }}",
+                    name,
+                    params.iter().join(", "),
+                    body
+                )
             }
             Expression::Call { expr, args } => {
                 write!(f, "{}({})", expr, args.iter().join(", "))
@@ -180,8 +187,13 @@ pub fn if_expr(cond: Expression, yes: Block, no: Option<Block>) -> Expression {
     }
 }
 
-pub fn function<S: Into<String> + Clone>(params: Vec<S>, body: Block) -> Expression {
+pub fn function<S: Into<String> + Clone, T: Into<String>>(
+    name: T,
+    params: Vec<S>,
+    body: Block,
+) -> Expression {
     Expression::Function {
+        name: name.into(),
         params: params.iter().map(|param| param.clone().into()).collect(),
         body,
     }

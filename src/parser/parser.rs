@@ -120,7 +120,11 @@ impl<'a> Parser<'a> {
 
         self.advance_if(&Token::Assign)?; // advance over `Token::Assign`
 
-        let expr = self.parse_expr(Precedence::Lowest)?;
+        let mut expr = self.parse_expr(Precedence::Lowest)?;
+
+        if let Expression::Function { params, body, .. } = expr {
+            expr = function(&name, params, body);
+        }
 
         self.advance_if(&Token::Semicolon)?; // advance over `Token::Semicolon`
 
@@ -350,7 +354,7 @@ impl<'a> Parser<'a> {
             &Token::RBrace,
         )?;
 
-        Ok(function(params, body))
+        Ok(function("anonymous", params, body))
     }
 
     // (<param>(<,><param>)*)*
@@ -469,7 +473,8 @@ mod tests {
     #[test_case(
         b"fn() {}",
         block(vec![expr_stmt(
-            function::<String>(
+            function::<String, &str>(
+                "anonymous",
                 vec![],
                 block(vec![])
             )
@@ -480,6 +485,7 @@ mod tests {
         b"fn(x) {}",
         block(vec![expr_stmt(
             function(
+                "anonymous",
                 vec![
                     "x",
                 ],
@@ -492,6 +498,7 @@ mod tests {
         b"fn(x, y) { x + y; }",
         block(vec![expr_stmt(
             function(
+                "anonymous",
                 vec![
                     "x",
                     "y",
@@ -513,6 +520,7 @@ mod tests {
         b"fn(x, y, z) {}",
         block(vec![expr_stmt(
             function(
+                "anonymous",
                 vec![
                     "x",
                     "y",

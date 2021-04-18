@@ -11,6 +11,7 @@ pub enum Scope {
     Local,
     Free,
     Builtin,
+    Function,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,7 +30,7 @@ impl fmt::Display for Symbol {
 #[derive(Debug, Clone)]
 pub struct SymbolTable {
     pub outer: Option<Box<SymbolTable>>,
-    store: HashMap<String, Symbol>,
+    pub store: HashMap<String, Symbol>,
     pub free_symbols: Vec<Symbol>,
     pub cnt: u16,
 }
@@ -108,6 +109,16 @@ impl SymbolTable {
         self.store.entry(name).or_insert(symbol.clone());
 
         symbol
+    }
+
+    pub fn define_function_name(&mut self, name: &str) -> &Symbol {
+        let symbol = Symbol {
+            name: name.to_string(),
+            scope: Scope::Function,
+            index: 0,
+        };
+
+        self.store.entry(name.to_string()).or_insert(symbol)
     }
 
     pub fn resolve(&mut self, name: &str) -> Option<Symbol> {

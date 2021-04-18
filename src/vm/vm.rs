@@ -14,6 +14,7 @@ const FALSE: u16 = 7;
 const TRUE: u16 = 8;
 
 pub struct Frame {
+    closure: Reference,
     bytes: Vec<u8>,
     frees: Vec<Reference>,
     pc: i32,
@@ -21,8 +22,9 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(bytes: Vec<u8>, frees: Vec<Reference>, fp: usize) -> Frame {
+    pub fn new(closure: Reference, bytes: Vec<u8>, frees: Vec<Reference>, fp: usize) -> Frame {
         Frame {
+            closure,
             bytes,
             frees,
             pc: -1,
@@ -42,11 +44,11 @@ pub struct VirtualMachine {
 
 impl VirtualMachine {
     pub fn new(byte_code: ByteCode) -> VirtualMachine {
-        let mut main_frame = Frame::new(byte_code.bytes, vec![], 0);
+        let mut main_frame = Frame::new(0, byte_code.bytes, vec![], 0);
         main_frame.pc = 0;
         let mut frames: Vec<_> = vec![0; FRAMES_SIZE]
             .iter()
-            .map(|_| Frame::new(vec![], vec![], 0))
+            .map(|_| Frame::new(0, vec![], vec![], 0))
             .collect();
         frames[0] = main_frame;
 
@@ -158,6 +160,7 @@ impl VirtualMachine {
                 Op::GETBUILTIN => self.get_builtin()?,
                 Op::CLOSURE => self.closure()?,
                 Op::GETFREE => self.get_free()?,
+                Op::CURRENT => self.current()?,
                 _ => {
                     return Err(MonkeyError::RuntimeError(
                         "invalid bytecode format.".to_string(),
@@ -395,13 +398,19 @@ impl VirtualMachine {
         let obj = self.dereference(reference)?;
 
         match obj.clone() {
-            Object::Closure { fun, frees } => self.call_closure(fun, frees, n_args),
+            Object::Closure { fun, frees } => self.call_closure(reference, fun, frees, n_args),
             Object::Builtin(builtin) => self.call_builtin(builtin, n_args),
             _ => Err(MonkeyError::type_mismatch(format!("{}(...)", obj))),
         }
     }
 
-    fn call_closure(&mut self, fun: Reference, frees: Vec<Reference>, n_args: usize) -> Result<()> {
+    fn call_closure(
+        &mut self,
+        closure: Reference,
+        fun: Reference,
+        frees: Vec<Reference>,
+        n_args: usize,
+    ) -> Result<()> {
         match self.dereference(fun)? {
             Object::Function {
                 bytes,
@@ -409,7 +418,7 @@ impl VirtualMachine {
                 params,
             } => {
                 if n_args == *params {
-                    let frame = Frame::new(bytes.clone(), frees, self.sp - n_args);
+                    let frame = Frame::new(closure, bytes.clone(), frees, self.sp - n_args);
                     self.sp = frame.fp + locals;
                     self.push_frame(frame);
                     Ok(())
@@ -576,6 +585,11 @@ impl VirtualMachine {
 
         let reference = self.frame().frees[index];
         self.push(reference)
+    }
+
+    fn current(&mut self) -> Result<()> {
+        let current_closure = self.frame().closure;
+        self.push(current_closure)
     }
 }
 
@@ -2392,8 +2406,8 @@ mod tests {
                     Op::Eq,
                     Op::JumpIfNot(15),
                     Op::Constant(10),
-                    Op::Jump(26),
-                    Op::GetGlobal(0),
+                    Op::Jump(24),
+                    Op::Current,
                     Op::GetLocal(0),
                     Op::Constant(11),
                     Op::Sub,
@@ -2411,6 +2425,67 @@ mod tests {
             Object::integer(0),
         ]) ;
         "recursive closures 01"
+    )]
+    #[test_case(
+        "let f = fn() {\n\
+            let g = fn(x) {\n\
+                if (x == 0) {\n\
+                    0\n\
+                } else {\n\
+                    g(x - 1)\n\
+                }\n\
+            };\n\
+            g(1)\n\
+        };\n\
+        f()",
+        vec![10],
+        vec![15, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        heap(vec![
+            Object::integer(0),
+            Object::integer(0),
+            Object::integer(1),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::GetLocal(0),
+                    Op::Constant(9),
+                    Op::Eq,
+                    Op::JumpIfNot(15),
+                    Op::Constant(10),
+                    Op::Jump(24),
+                    Op::Current,
+                    Op::GetLocal(0),
+                    Op::Constant(11),
+                    Op::Sub,
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 1,
+            },
+            Object::integer(1),
+            Object::Function {
+                bytes: encode(vec![
+                    Op::Closure(12, 0),
+                    Op::SetLocal(0),
+                    Op::GetLocal(0),
+                    Op::Constant(13),
+                    Op::Call(1),
+                    Op::Return,
+                ]),
+                locals: 1,
+                params: 0,
+            },
+            Object::Closure {
+                fun: 14,
+                frees: vec![],
+            },
+            Object::Closure {
+                fun: 12,
+                frees: vec![],
+            },
+            Object::integer(0),
+        ]) ;
+        "recursive closures 02"
     )]
     fn test(input: &str, stack: Vec<Reference>, globals: Vec<Reference>, heap: Vec<Object>) {
         let lexer = Lexer::new(input.as_bytes());

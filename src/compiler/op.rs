@@ -62,6 +62,7 @@ pub enum Op {
     // Closures
     Closure(Reference, M),
     GetFree(FreeBinding),
+    Current,
 }
 
 #[rustfmt::skip]
@@ -106,6 +107,7 @@ impl Op {
 
     pub const CLOSURE   : u8 = 27;
     pub const GETFREE   : u8 = 28;
+    pub const CURRENT   : u8 = 29;
 
     pub fn format(op: u8) -> String {
         match op {
@@ -136,6 +138,7 @@ impl Op {
             Op::SETLOCAL => "set_local",
             Op::GETBUILTIN => "get_builtin",
             Op::CLOSURE => "closure",
+            Op::CURRENT => "current",
             _ => "?",
         }.to_string()
     }
@@ -173,6 +176,7 @@ impl fmt::Display for Op {
             Op::GetBuiltin(builtin) => write!(f, "GetBuiltin {}", builtin),
             Op::Closure(reference, free) => write!(f, "Closure {} {}", reference, free),
             Op::GetFree(binding) => write!(f, "GetFree {}", binding),
+            Op::Current => write!(f, "Current"),
         }
     }
 }
