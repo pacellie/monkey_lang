@@ -15,17 +15,17 @@ const TRUE: u16 = 8;
 
 pub struct Frame {
     closure: Reference,
-    bytes: Vec<u8>,
+    ops: Vec<Op>,
     frees: Vec<Reference>,
     pc: i32,
     fp: usize,
 }
 
 impl Frame {
-    pub fn new(closure: Reference, bytes: Vec<u8>, frees: Vec<Reference>, fp: usize) -> Frame {
+    pub fn new(closure: Reference, ops: Vec<Op>, frees: Vec<Reference>, fp: usize) -> Frame {
         Frame {
             closure,
-            bytes,
+            ops,
             frees,
             pc: -1,
             fp,
@@ -37,14 +37,14 @@ pub struct VirtualMachine {
     pub heap: Vec<Object>,
     pub globals: Vec<Reference>,
     pub frames: Vec<Frame>,
-    pub fi: usize,
+    pub frame_index: usize,
     pub stack: Vec<Reference>,
     pub sp: usize,
 }
 
 impl VirtualMachine {
     pub fn new(byte_code: ByteCode) -> VirtualMachine {
-        let mut main_frame = Frame::new(0, byte_code.bytes, vec![], 0);
+        let mut main_frame = Frame::new(0, byte_code.ops, vec![], 0);
         main_frame.pc = 0;
         let mut frames: Vec<_> = vec![0; FRAMES_SIZE]
             .iter()
@@ -56,43 +56,32 @@ impl VirtualMachine {
             heap: byte_code.constants,
             globals: vec![0; GLOBALS_SIZE],
             frames,
-            fi: 1,
+            frame_index: 1,
             stack: vec![0; STACK_SIZE],
             sp: 0,
         }
     }
 
-    fn frame(&self) -> &Frame {
-        &self.frames[self.fi - 1]
+    fn current_frame(&self) -> &Frame {
+        &self.frames[self.frame_index - 1]
     }
 
     fn pc(&self) -> usize {
-        self.frames[self.fi - 1].pc as usize
+        self.frames[self.frame_index - 1].pc as usize
     }
 
     fn pc_mut(&mut self) -> &mut i32 {
-        &mut self.frames[self.fi - 1].pc
+        &mut self.frames[self.frame_index - 1].pc
     }
 
     fn push_frame(&mut self, frame: Frame) {
-        self.frames[self.fi] = frame;
-        self.fi += 1;
+        self.frames[self.frame_index] = frame;
+        self.frame_index += 1;
     }
 
     fn pop_frame(&mut self) -> &Frame {
-        self.fi -= 1;
-        &self.frames[self.fi]
-    }
-
-    fn read_u8(&self) -> u8 {
-        self.frame().bytes[self.pc() + 1]
-    }
-
-    fn read_u16(&self) -> u16 {
-        u16::from_be_bytes([
-            self.frame().bytes[self.pc() + 1],
-            self.frame().bytes[self.pc() + 2],
-        ])
+        self.frame_index -= 1;
+        &self.frames[self.frame_index]
     }
 
     fn reference(&mut self, obj: Object) -> Reference {
@@ -131,41 +120,34 @@ impl VirtualMachine {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        while self.pc() < self.frame().bytes.len() {
-            let op = self.frame().bytes[self.pc()];
-
-            match op {
-                Op::CONSTANT => self.constant()?,
-                Op::POP => {
-                    self.pop();
+        while self.pc() < self.current_frame().ops.len() {
+            match self.current_frame().ops[self.pc()].clone() {
+                Op::Constant(reference) => self.execute_constant(reference)?,
+                Op::Pop => self.execute_pop(),
+                Op::Unit => self.execute_unit()?,
+                Op::False => self.execute_false()?,
+                Op::True => self.execute_true()?,
+                Op::Add | Op::Sub | Op::Mul | Op::Div | Op::Eq | Op::Neq | Op::Lt | Op::Gt => {
+                    self.execute_bin_op(self.current_frame().ops[self.pc()].clone())?
                 }
-                Op::UNIT => self.push(UNIT)?,
-                Op::FALSE => self.push(FALSE)?,
-                Op::TRUE => self.push(TRUE)?,
-                Op::ADD | Op::SUB | Op::MUL | Op::DIV | Op::EQ | Op::NEQ | Op::LT | Op::GT => {
-                    self.bin_op(self.frame().bytes[self.pc()])?
+                Op::Minus | Op::Bang => {
+                    self.execute_un_op(self.current_frame().ops[self.pc()].clone())?
                 }
-                Op::MINUS | Op::BANG => self.un_op(self.frame().bytes[self.pc()])?,
-                Op::JUMPIFNOT => self.jump_if_not()?,
-                Op::JUMP => self.jump(),
-                Op::SETGLOBAL => self.set_global(),
-                Op::GETGLOBAL => self.get_global()?,
-                Op::ARRAY => self.array()?,
-                Op::MAP => self.map()?,
-                Op::INDEX => self.index()?,
-                Op::CALL => self.call()?,
-                Op::RETURN => self.ret()?,
-                Op::SETLOCAL => self.set_local(),
-                Op::GETLOCAL => self.get_local()?,
-                Op::GETBUILTIN => self.get_builtin()?,
-                Op::CLOSURE => self.closure()?,
-                Op::GETFREE => self.get_free()?,
-                Op::CURRENT => self.current()?,
-                _ => {
-                    return Err(MonkeyError::RuntimeError(
-                        "invalid bytecode format.".to_string(),
-                    ))
-                }
+                Op::JumpIfNot(index) => self.execute_jump_if_not(index as i32)?,
+                Op::Jump(index) => self.execute_jump(index as i32),
+                Op::SetGlobal(index) => self.execute_set_global(index as usize),
+                Op::GetGlobal(index) => self.execute_get_global(index as usize)?,
+                Op::Array(n) => self.execute_array(n as usize)?,
+                Op::Map(n) => self.execute_map(n as usize)?,
+                Op::Index => self.execute_index()?,
+                Op::Call(n_args) => self.execute_call(n_args as usize)?,
+                Op::Return => self.execute_return()?,
+                Op::SetLocal(index) => self.execute_set_local(index as usize),
+                Op::GetLocal(index) => self.execute_get_local(index as usize)?,
+                Op::GetBuiltin(reference) => self.execute_get_builtin(reference as u16)?,
+                Op::Closure(fun, n_free) => self.execute_closure(fun, n_free as usize)?,
+                Op::GetFree(index) => self.execute_get_free(index as usize)?,
+                Op::CurrentClosure => self.execute_current_closure()?,
             }
 
             *self.pc_mut() += 1;
@@ -174,29 +156,41 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn constant(&mut self) -> Result<()> {
-        let reference = self.read_u16();
-        self.push(reference)?;
-        *self.pc_mut() += 2;
-
-        Ok(())
+    fn execute_constant(&mut self, reference: Reference) -> Result<()> {
+        self.push(reference)
     }
 
-    fn bin_op(&mut self, op: u8) -> Result<()> {
+    fn execute_pop(&mut self) {
+        self.pop();
+    }
+
+    fn execute_unit(&mut self) -> Result<()> {
+        self.push(UNIT)
+    }
+
+    fn execute_false(&mut self) -> Result<()> {
+        self.push(FALSE)
+    }
+
+    fn execute_true(&mut self) -> Result<()> {
+        self.push(TRUE)
+    }
+
+    fn execute_bin_op(&mut self, op: Op) -> Result<()> {
         let right = self.pop();
         let left = self.pop();
 
         #[rustfmt::skip]
         let reference = match (left, op, right) {
-            (FALSE, Op::EQ, FALSE) => TRUE ,
-            (FALSE, Op::EQ, TRUE ) => FALSE,
-            (TRUE , Op::EQ, FALSE) => FALSE,
-            (TRUE , Op::EQ, TRUE ) => TRUE ,
+            (FALSE, Op::Eq, FALSE) => TRUE ,
+            (FALSE, Op::Eq, TRUE ) => FALSE,
+            (TRUE , Op::Eq, FALSE) => FALSE,
+            (TRUE , Op::Eq, TRUE ) => TRUE ,
 
-            (FALSE, Op::NEQ, FALSE) => FALSE,
-            (FALSE, Op::NEQ, TRUE ) => TRUE ,
-            (TRUE , Op::NEQ, FALSE) => TRUE ,
-            (TRUE , Op::NEQ, TRUE ) => FALSE,
+            (FALSE, Op::Neq, FALSE) => FALSE,
+            (FALSE, Op::Neq, TRUE ) => TRUE ,
+            (TRUE , Op::Neq, FALSE) => TRUE ,
+            (TRUE , Op::Neq, TRUE ) => FALSE,
 
             (left, op, right) => {
                 let left = self.dereference(left)?;
@@ -205,45 +199,45 @@ impl VirtualMachine {
                 match (left, right) {
                     (Object::Primitive(left), Object::Primitive(right)) =>
                         match (left, op, right) {
-                            (Primitive::Integer(i), Op::ADD, Primitive::Integer(j)) => {
+                            (Primitive::Integer(i), Op::Add, Primitive::Integer(j)) => {
                                 let obj = Object::integer(i + j);
                                 self.reference(obj)
                             }
-                            (Primitive::Integer(i), Op::SUB, Primitive::Integer(j)) => {
+                            (Primitive::Integer(i), Op::Sub, Primitive::Integer(j)) => {
                                 let obj = Object::integer(i - j);
                                 self.reference(obj)
                             }
-                            (Primitive::Integer(i), Op::MUL, Primitive::Integer(j)) => {
+                            (Primitive::Integer(i), Op::Mul, Primitive::Integer(j)) => {
                                 let obj = Object::integer(i * j);
                                 self.reference(obj)
                             }
-                            (Primitive::Integer(i), Op::DIV, Primitive::Integer(j)) => {
+                            (Primitive::Integer(i), Op::Div, Primitive::Integer(j)) => {
                                 let obj = Object::integer(i / j);
                                 self.reference(obj)
                             }
-                            (Primitive::Integer(i), Op::EQ , Primitive::Integer(j)) =>
+                            (Primitive::Integer(i), Op::Eq , Primitive::Integer(j)) =>
                                 if i == j { TRUE } else { FALSE },
-                            (Primitive::Integer(i), Op::NEQ, Primitive::Integer(j)) =>
+                            (Primitive::Integer(i), Op::Neq, Primitive::Integer(j)) =>
                                 if i != j { TRUE } else { FALSE },
-                            (Primitive::Integer(i), Op::LT , Primitive::Integer(j)) =>
+                            (Primitive::Integer(i), Op::Lt , Primitive::Integer(j)) =>
                                 if i < j  { TRUE } else { FALSE },
-                            (Primitive::Integer(i), Op::GT , Primitive::Integer(j)) =>
+                            (Primitive::Integer(i), Op::Gt , Primitive::Integer(j)) =>
                                 if i > j  { TRUE } else { FALSE },
 
-                            (Primitive::String(s1), Op::ADD, Primitive::String(s2)) => {
+                            (Primitive::String(s1), Op::Add, Primitive::String(s2)) => {
                                 let obj = Object::string(s1.clone() + s2);
                                 self.reference(obj)
                             }
                             (left, op, right) =>
                                 return Err(MonkeyError::type_mismatch(format!(
                                     "{} {} {}",
-                                    left, Op::format(op), right
+                                    left, op, right
                                 ))),
                         }
                     (left, right) =>
                         return Err(MonkeyError::type_mismatch(format!(
                             "{} {} {}",
-                            left, Op::format(op), right
+                            left, op, right
                         ))),
                 }
             }
@@ -252,27 +246,23 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn un_op(&mut self, op: u8) -> Result<()> {
+    fn execute_un_op(&mut self, op: Op) -> Result<()> {
         let reference = self.pop();
 
         #[rustfmt::skip]
         let reference = match (op, reference) {
-            (Op::BANG, FALSE) => TRUE ,
-            (Op::BANG, TRUE ) => FALSE,
+            (Op::Bang, FALSE) => TRUE ,
+            (Op::Bang, TRUE ) => FALSE,
             (op, reference) => {
                 let obj = self.dereference(reference)?;
 
                 match (op, obj) {
-                    (Op::MINUS, Object::Primitive(Primitive::Integer(i))) => {
+                    (Op::Minus, Object::Primitive(Primitive::Integer(i))) => {
                         let obj = Object::integer(-i);
                         self.reference(obj)
                     }
                     (op, obj) =>
-                        return Err(MonkeyError::type_mismatch(format!(
-                            "{}{}",
-                            Op::format(op),
-                            obj
-                        ))),
+                        return Err(MonkeyError::type_mismatch(format!( "{}{}", op, obj))),
                 }
             }
         };
@@ -280,18 +270,15 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn jump_if_not(&mut self) -> Result<()> {
+    fn execute_jump_if_not(&mut self, index: i32) -> Result<()> {
         let reference = self.pop();
 
         match reference {
             FALSE => {
-                let address = self.read_u16();
-                *self.pc_mut() = address as i32;
+                *self.pc_mut() = index;
                 *self.pc_mut() -= 1;
             }
-            TRUE => {
-                *self.pc_mut() += 2;
-            }
+            TRUE => (),
             reference => {
                 return Err(MonkeyError::type_mismatch(format!(
                     "if ({}) {{...}}",
@@ -303,44 +290,30 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn jump(&mut self) {
-        let address = self.read_u16();
-        *self.pc_mut() = address as i32;
+    fn execute_jump(&mut self, index: i32) {
+        *self.pc_mut() = index;
         *self.pc_mut() -= 1;
     }
 
-    fn set_global(&mut self) {
-        let index = self.read_u16() as usize;
+    fn execute_set_global(&mut self, index: usize) {
         let reference = self.pop();
         self.globals[index] = reference;
-        *self.pc_mut() += 2;
     }
 
-    fn get_global(&mut self) -> Result<()> {
-        let index = self.read_u16() as usize;
+    fn execute_get_global(&mut self, index: usize) -> Result<()> {
         let reference = self.globals[index];
-        self.push(reference)?;
-
-        *self.pc_mut() += 2;
-        Ok(())
-    }
-
-    fn array(&mut self) -> Result<()> {
-        let n = self.read_u16() as usize;
-
-        let references = &self.stack[self.sp - n..self.sp];
-        self.sp = self.sp - n;
-        let obj = Object::Array(references.to_vec());
-
-        let reference = self.reference(obj);
-
-        *self.pc_mut() += 2;
         self.push(reference)
     }
 
-    fn map(&mut self) -> Result<()> {
-        let n = self.read_u16() as usize;
+    fn execute_array(&mut self, n: usize) -> Result<()> {
+        let references = &self.stack[self.sp - n..self.sp];
+        self.sp = self.sp - n;
+        let obj = Object::Array(references.to_vec());
+        let reference = self.reference(obj);
+        self.push(reference)
+    }
 
+    fn execute_map(&mut self, n: usize) -> Result<()> {
         let references = &self.stack[self.sp - 2 * n..self.sp];
         self.sp = self.sp - 2 * n;
 
@@ -355,12 +328,10 @@ impl VirtualMachine {
         }
 
         let reference = self.reference(Object::Map(hm));
-
-        *self.pc_mut() += 2;
         self.push(reference)
     }
 
-    fn index(&mut self) -> Result<()> {
+    fn execute_index(&mut self) -> Result<()> {
         let index = self.pop();
         let indexable = self.pop();
 
@@ -390,10 +361,7 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn call(&mut self) -> Result<()> {
-        let n_args = self.read_u8() as usize;
-        *self.pc_mut() += 1;
-
+    fn execute_call(&mut self, n_args: usize) -> Result<()> {
         let reference = self.stack[self.sp - 1 - n_args];
         let obj = self.dereference(reference)?;
 
@@ -413,7 +381,7 @@ impl VirtualMachine {
     ) -> Result<()> {
         match self.dereference(fun)? {
             Object::Function {
-                bytes,
+                ops: bytes,
                 locals,
                 params,
             } => {
@@ -523,7 +491,7 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn ret(&mut self) -> Result<()> {
+    fn execute_return(&mut self) -> Result<()> {
         let reference = self.pop();
 
         let fp = self.pop_frame().fp;
@@ -532,41 +500,22 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn set_local(&mut self) {
-        let index = self.read_u8() as usize;
-        let fp = self.frame().fp;
-
+    fn execute_set_local(&mut self, index: usize) {
+        let fp = self.current_frame().fp;
         self.stack[fp + index] = self.pop();
-
-        *self.pc_mut() += 1;
     }
 
-    fn get_local(&mut self) -> Result<()> {
-        let index = self.read_u8() as usize;
-        let fp = self.frame().fp;
-
+    fn execute_get_local(&mut self, index: usize) -> Result<()> {
+        let fp = self.current_frame().fp;
         let reference = self.stack[fp + index];
-
-        *self.pc_mut() += 1;
-
         self.push(reference)
     }
 
-    fn get_builtin(&mut self) -> Result<()> {
-        let reference = self.read_u8() as u16;
-
-        *self.pc_mut() += 1;
-
+    fn execute_get_builtin(&mut self, reference: u16) -> Result<()> {
         self.push(reference)
     }
 
-    fn closure(&mut self) -> Result<()> {
-        let fun = self.read_u16();
-        *self.pc_mut() += 2;
-
-        let n_free = self.read_u8() as usize;
-        *self.pc_mut() += 1;
-
+    fn execute_closure(&mut self, fun: u16, n_free: usize) -> Result<()> {
         let mut frees = vec![0; n_free];
         for i in 0..n_free {
             frees[i] = self.stack[self.sp - n_free + i];
@@ -579,16 +528,13 @@ impl VirtualMachine {
         self.push(reference)
     }
 
-    fn get_free(&mut self) -> Result<()> {
-        let index = self.read_u8() as usize;
-        *self.pc_mut() += 1;
-
-        let reference = self.frame().frees[index];
+    fn execute_get_free(&mut self, index: usize) -> Result<()> {
+        let reference = self.current_frame().frees[index];
         self.push(reference)
     }
 
-    fn current(&mut self) -> Result<()> {
-        let current_closure = self.frame().closure;
+    fn execute_current_closure(&mut self) -> Result<()> {
+        let current_closure = self.current_frame().closure;
         self.push(current_closure)
     }
 }
@@ -602,16 +548,6 @@ mod tests {
     use crate::parser::Parser;
 
     use test_case::test_case;
-
-    fn encode(ops: Vec<Op>) -> Vec<u8> {
-        let mut compiler = Compiler::new();
-
-        for op in ops {
-            compiler.encode(op);
-        }
-
-        compiler.scopes[0].bytes.clone()
-    }
 
     fn concat<A: Clone>(xs: Vec<A>, ys: Vec<A>) -> Vec<A> {
         let zs: Vec<A> = xs.iter().cloned().chain(ys.iter().cloned()).collect();
@@ -1256,12 +1192,12 @@ mod tests {
             Object::integer(5),
             Object::integer(10),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Constant(10),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1280,19 +1216,19 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(11),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1315,34 +1251,34 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::Call(0),
                     Op::Constant(11),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::integer(3),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(1),
                     Op::Call(0),
                     Op::Constant(13),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1371,12 +1307,12 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
                     Op::Constant(10),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1395,13 +1331,13 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
                     Op::Constant(10),
                     Op::Return,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1418,10 +1354,10 @@ mod tests {
         vec![10, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(6),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1438,19 +1374,19 @@ mod tests {
         vec![11, 12, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(6),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::Call(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1472,18 +1408,18 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1505,12 +1441,12 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1529,7 +1465,7 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::SetLocal(0),
                     Op::Constant(10),
@@ -1538,7 +1474,7 @@ mod tests {
                     Op::GetLocal(1),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 0,
             },
@@ -1558,7 +1494,7 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::SetLocal(0),
                     Op::Constant(10),
@@ -1567,14 +1503,14 @@ mod tests {
                     Op::GetLocal(1),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 0,
             },
             Object::integer(3),
             Object::integer(4),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(12),
                     Op::SetLocal(0),
                     Op::Constant(13),
@@ -1583,7 +1519,7 @@ mod tests {
                     Op::GetLocal(1),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 0,
             },
@@ -1609,27 +1545,27 @@ mod tests {
             Object::integer(42),
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(10),
                     Op::SetLocal(0),
                     Op::GetGlobal(0),
                     Op::GetLocal(0),
                     Op::Sub,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(12),
                     Op::SetLocal(0),
                     Op::GetGlobal(0),
                     Op::GetLocal(0),
                     Op::Sub,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1654,20 +1590,20 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Closure(10, 0),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1688,10 +1624,10 @@ mod tests {
         vec![11, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -1709,12 +1645,12 @@ mod tests {
         vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 2,
             },
@@ -1734,14 +1670,14 @@ mod tests {
         vec![12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
                     Op::SetLocal(2),
                     Op::GetLocal(2),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -1761,14 +1697,14 @@ mod tests {
         vec![14, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
                     Op::SetLocal(2),
                     Op::GetLocal(2),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -1792,14 +1728,14 @@ mod tests {
         vec![15, 16, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
                     Op::SetLocal(2),
                     Op::GetLocal(2),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -1808,7 +1744,7 @@ mod tests {
             Object::integer(3),
             Object::integer(4),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::Constant(10),
                     Op::Constant(11),
@@ -1819,7 +1755,7 @@ mod tests {
                     Op::Call(2),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1852,7 +1788,7 @@ mod tests {
         heap(vec![
             Object::integer(42),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
@@ -1861,7 +1797,7 @@ mod tests {
                     Op::GetGlobal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -1870,7 +1806,7 @@ mod tests {
             Object::integer(3),
             Object::integer(4),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(1),
                     Op::Constant(11),
                     Op::Constant(12),
@@ -1883,7 +1819,7 @@ mod tests {
                     Op::GetGlobal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1906,7 +1842,7 @@ mod tests {
         "function call 19"
     )]
     #[test_case(
-        "let a = 42; let f = fn() { if(false) { 1 } else { 0 } }; f()",
+        "let a = 42; let f = fn() { if (false) { 1 } else { 0 } }; f()",
         vec![11],
         vec![9, 13, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
@@ -1914,14 +1850,14 @@ mod tests {
             Object::integer(1),
             Object::integer(0),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::False,
-                    Op::JumpIfNot(10),
+                    Op::JumpIfNot(4),
                     Op::Constant(10),
-                    Op::Jump(13),
+                    Op::Jump(5),
                     Op::Constant(11),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -2043,19 +1979,19 @@ mod tests {
         vec![12, 13, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Closure(9, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -2081,24 +2017,24 @@ mod tests {
         vec![14, 15, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetFree(1),
                     Op::Add,
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Closure(9, 2),
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 2,
             },
@@ -2129,17 +2065,17 @@ mod tests {
         vec![14, 16, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
@@ -2147,7 +2083,7 @@ mod tests {
                     Op::GetLocal(2),
                     Op::Closure(9, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -2182,17 +2118,17 @@ mod tests {
         vec![16, 18, 20, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetFree(0),
                     Op::Add,
@@ -2200,12 +2136,12 @@ mod tests {
                     Op::GetLocal(1),
                     Op::Closure(9, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::GetLocal(1),
                     Op::Add,
@@ -2213,7 +2149,7 @@ mod tests {
                     Op::GetLocal(2),
                     Op::Closure(10, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 2,
             },
@@ -2254,7 +2190,7 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::GetFree(0),
                     Op::Add,
@@ -2263,26 +2199,26 @@ mod tests {
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Closure(10, 2),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Closure(11, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -2319,35 +2255,35 @@ mod tests {
         vec![15, 18, 0, 0, 0, 0, 0, 0, 0, 0],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::Call(0),
                     Op::GetFree(1),
                     Op::Call(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Closure(9, 1),
                     Op::SetLocal(2),
@@ -2358,7 +2294,7 @@ mod tests {
                     Op::GetLocal(3),
                     Op::Closure(11, 2),
                     Op::Return,
-                ]),
+                ],
                 locals: 4,
                 params: 2,
             },
@@ -2400,20 +2336,20 @@ mod tests {
             Object::integer(0),
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Constant(9),
                     Op::Eq,
-                    Op::JumpIfNot(15),
+                    Op::JumpIfNot(6),
                     Op::Constant(10),
-                    Op::Jump(24),
-                    Op::Current,
+                    Op::Jump(11),
+                    Op::CurrentClosure,
                     Op::GetLocal(0),
                     Op::Constant(11),
                     Op::Sub,
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -2445,33 +2381,33 @@ mod tests {
             Object::integer(0),
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Constant(9),
                     Op::Eq,
-                    Op::JumpIfNot(15),
+                    Op::JumpIfNot(6),
                     Op::Constant(10),
-                    Op::Jump(24),
-                    Op::Current,
+                    Op::Jump(11),
+                    Op::CurrentClosure,
                     Op::GetLocal(0),
                     Op::Constant(11),
                     Op::Sub,
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Closure(12, 0),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Constant(13),
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },

@@ -1,4 +1,5 @@
 use crate::builtin::Builtin;
+use crate::compiler::Op;
 use crate::compiler::Reference;
 
 use std::collections::HashMap;
@@ -31,7 +32,7 @@ pub enum Object {
     Array(Vec<Reference>),
     Map(HashMap<Primitive, Reference>),
     Function {
-        bytes: Vec<u8>,
+        ops: Vec<Op>,
         locals: usize,
         params: usize,
     },

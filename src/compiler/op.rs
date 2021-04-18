@@ -62,86 +62,7 @@ pub enum Op {
     // Closures
     Closure(Reference, M),
     GetFree(FreeBinding),
-    Current,
-}
-
-#[rustfmt::skip]
-impl Op {
-    pub const CONSTANT  : u8 = 0;
-    pub const POP       : u8 = 1;
-
-    pub const UNIT      : u8 = 2;
-
-    pub const FALSE     : u8 = 3;
-    pub const TRUE      : u8 = 4;
-
-    pub const ADD       : u8 = 5;
-    pub const SUB       : u8 = 6;
-    pub const MUL       : u8 = 7;
-    pub const DIV       : u8 = 8;
-    pub const EQ        : u8 = 9;
-    pub const NEQ       : u8 = 10;
-    pub const LT        : u8 = 11;
-    pub const GT        : u8 = 12;
-
-    pub const MINUS     : u8 = 13;
-    pub const BANG      : u8 = 14;
-
-    pub const JUMPIFNOT : u8 = 15;
-    pub const JUMP      : u8 = 16;
-
-    pub const GETGLOBAL : u8 = 17;
-    pub const SETGLOBAL : u8 = 18;
-
-    pub const ARRAY     : u8 = 19;
-    pub const MAP       : u8 = 20;
-    pub const INDEX     : u8 = 21;
-
-    pub const CALL      : u8 = 22;
-    pub const RETURN    : u8 = 23;
-
-    pub const GETLOCAL  : u8 = 24;
-    pub const SETLOCAL  : u8 = 25;
-
-    pub const GETBUILTIN: u8 = 26;
-
-    pub const CLOSURE   : u8 = 27;
-    pub const GETFREE   : u8 = 28;
-    pub const CURRENT   : u8 = 29;
-
-    pub fn format(op: u8) -> String {
-        match op {
-            Op::CONSTANT => "constant",
-            Op::POP => "pop",
-            Op::UNIT => "unit",
-            Op::FALSE => "false",
-            Op::TRUE => "true",
-            Op::ADD => "+",
-            Op::SUB => "-",
-            Op::MUL => "*",
-            Op::DIV => "/",
-            Op::EQ => "==",
-            Op::NEQ => "!=",
-            Op::LT => "<",
-            Op::GT => ">",
-            Op::MINUS => "-",
-            Op::BANG => "!",
-            Op::JUMPIFNOT => "jump_if_not",
-            Op::JUMP => "jump",
-            Op::GETGLOBAL => "get_global",
-            Op::SETGLOBAL => "set_global",
-            Op::ARRAY => "array",
-            Op::MAP => "map",
-            Op::CALL => "call",
-            Op::RETURN => "return",
-            Op::GETLOCAL => "get_local",
-            Op::SETLOCAL => "set_local",
-            Op::GETBUILTIN => "get_builtin",
-            Op::CLOSURE => "closure",
-            Op::CURRENT => "current",
-            _ => "?",
-        }.to_string()
-    }
+    CurrentClosure,
 }
 
 impl fmt::Display for Op {
@@ -176,7 +97,7 @@ impl fmt::Display for Op {
             Op::GetBuiltin(builtin) => write!(f, "GetBuiltin {}", builtin),
             Op::Closure(reference, free) => write!(f, "Closure {} {}", reference, free),
             Op::GetFree(binding) => write!(f, "GetFree {}", binding),
-            Op::Current => write!(f, "Current"),
+            Op::CurrentClosure => write!(f, "Current"),
         }
     }
 }

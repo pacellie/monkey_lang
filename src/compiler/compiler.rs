@@ -9,12 +9,12 @@ use std::mem;
 
 #[derive(Debug, Clone)]
 pub struct ByteCode {
-    pub bytes: Vec<u8>,
+    pub ops: Vec<Op>,
     pub constants: Vec<Object>,
 }
 
 pub struct Scope {
-    pub bytes: Vec<u8>,
+    pub ops: Vec<Op>,
 }
 
 pub struct Compiler {
@@ -27,7 +27,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Compiler {
         Compiler {
-            scopes: vec![Scope { bytes: vec![] }],
+            scopes: vec![Scope { ops: vec![] }],
             scope: 0,
             constants: Compiler::static_constants(),
             symbol_table: SymbolTable::toplevel(),
@@ -55,19 +55,19 @@ impl Compiler {
     fn enter_scope(&mut self) {
         self.symbol_table =
             SymbolTable::enclose(mem::replace(&mut self.symbol_table, SymbolTable::empty()));
-        self.scopes.push(Scope { bytes: vec![] });
+        self.scopes.push(Scope { ops: vec![] });
         self.scope += 1;
     }
 
-    fn leave_scope(&mut self) -> Vec<u8> {
+    fn leave_scope(&mut self) -> Vec<Op> {
         self.symbol_table = *self.symbol_table.outer.take().unwrap();
         self.scope -= 1;
-        self.scopes.pop().unwrap().bytes
+        self.scopes.pop().unwrap().ops
     }
 
     fn emit(&mut self, op: Op) -> usize {
-        let index = self.current_scope().bytes.len();
-        self.encode(op);
+        let index = self.current_scope().ops.len();
+        self.current_scope().ops.push(op);
         index
     }
 
@@ -77,17 +77,11 @@ impl Compiler {
         reference
     }
 
-    fn patch(&mut self, index: usize) {
-        let [x, y] = (self.current_scope().bytes.len() as u16).to_be_bytes();
-        self.current_scope().bytes[index + 1] = x;
-        self.current_scope().bytes[index + 2] = y;
-    }
-
     pub fn compile(&mut self, ast: &Program) -> Result<ByteCode> {
         self.compile_block_stmt(ast)?;
 
         Ok(ByteCode {
-            bytes: self.scopes[0].bytes.clone(),
+            ops: self.scopes[0].ops.clone(),
             constants: self.constants.clone(),
         })
     }
@@ -211,7 +205,8 @@ impl Compiler {
                 let jump_if_not = self.emit(Op::JumpIfNot(65535));
                 self.compile_block_stmt(yes)?;
                 let jump = self.emit(Op::Jump(65535));
-                self.patch(jump_if_not);
+                self.current_scope().ops[jump_if_not] =
+                    Op::JumpIfNot(self.current_scope().ops.len() as u16);
 
                 match no {
                     Some(no) => {
@@ -222,7 +217,7 @@ impl Compiler {
                     }
                 };
 
-                self.patch(jump);
+                self.current_scope().ops[jump] = Op::Jump(self.current_scope().ops.len() as u16);
             }
             Expression::Function { name, params, body } => {
                 self.enter_scope();
@@ -240,13 +235,12 @@ impl Compiler {
                 let free_symbols = self.symbol_table.free_symbols.clone();
                 let locals = self.symbol_table.cnt as usize;
 
-                let mut bytes = self.leave_scope();
+                let mut ops = self.leave_scope();
 
-                if bytes.len() == 0 {
-                    bytes.push(Op::CONSTANT);
-                    bytes.extend_from_slice(&6u16.to_be_bytes());
+                if ops.len() == 0 {
+                    ops.push(Op::Constant(6));
                 }
-                bytes.push(Op::RETURN);
+                ops.push(Op::Return);
 
                 let num_free_symbols = free_symbols.len() as u8;
                 for symbol in free_symbols {
@@ -254,7 +248,7 @@ impl Compiler {
                 }
 
                 let reference = self.allocate(Object::Function {
-                    bytes,
+                    ops,
                     locals,
                     params: params.len(),
                 });
@@ -286,133 +280,8 @@ impl Compiler {
             symbol::Scope::Local => self.emit(Op::GetLocal(symbol.index as u8)),
             symbol::Scope::Builtin => self.emit(Op::GetBuiltin(symbol.index as u8)),
             symbol::Scope::Free => self.emit(Op::GetFree(symbol.index as u8)),
-            symbol::Scope::Function => self.emit(Op::Current),
+            symbol::Scope::Function => self.emit(Op::CurrentClosure),
         };
-    }
-
-    pub fn encode(&mut self, op: Op) {
-        match op {
-            Op::Constant(reference) => {
-                self.current_scope().bytes.push(Op::CONSTANT);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&reference.to_be_bytes());
-            }
-            Op::Pop => {
-                self.current_scope().bytes.push(Op::POP);
-            }
-            Op::Unit => {
-                self.current_scope().bytes.push(Op::UNIT);
-            }
-            Op::False => {
-                self.current_scope().bytes.push(Op::FALSE);
-            }
-            Op::True => {
-                self.current_scope().bytes.push(Op::TRUE);
-            }
-            Op::Add => {
-                self.current_scope().bytes.push(Op::ADD);
-            }
-            Op::Sub => {
-                self.current_scope().bytes.push(Op::SUB);
-            }
-            Op::Mul => {
-                self.current_scope().bytes.push(Op::MUL);
-            }
-            Op::Div => {
-                self.current_scope().bytes.push(Op::DIV);
-            }
-            Op::Eq => {
-                self.current_scope().bytes.push(Op::EQ);
-            }
-            Op::Neq => {
-                self.current_scope().bytes.push(Op::NEQ);
-            }
-            Op::Lt => {
-                self.current_scope().bytes.push(Op::LT);
-            }
-            Op::Gt => {
-                self.current_scope().bytes.push(Op::GT);
-            }
-            Op::Minus => {
-                self.current_scope().bytes.push(Op::MINUS);
-            }
-            Op::Bang => {
-                self.current_scope().bytes.push(Op::BANG);
-            }
-            Op::JumpIfNot(address) => {
-                self.current_scope().bytes.push(Op::JUMPIFNOT);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&address.to_be_bytes());
-            }
-            Op::Jump(address) => {
-                self.current_scope().bytes.push(Op::JUMP);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&address.to_be_bytes());
-            }
-            Op::GetGlobal(binding) => {
-                self.current_scope().bytes.push(Op::GETGLOBAL);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&binding.to_be_bytes());
-            }
-            Op::SetGlobal(binding) => {
-                self.current_scope().bytes.push(Op::SETGLOBAL);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&binding.to_be_bytes());
-            }
-            Op::Array(n) => {
-                self.current_scope().bytes.push(Op::ARRAY);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&n.to_be_bytes());
-            }
-            Op::Map(n) => {
-                self.current_scope().bytes.push(Op::MAP);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&n.to_be_bytes());
-            }
-            Op::Index => {
-                self.current_scope().bytes.push(Op::INDEX);
-            }
-            Op::Call(m) => {
-                self.current_scope().bytes.push(Op::CALL);
-                self.current_scope().bytes.push(m);
-            }
-            Op::Return => {
-                self.current_scope().bytes.push(Op::RETURN);
-            }
-            Op::GetLocal(binding) => {
-                self.current_scope().bytes.push(Op::GETLOCAL);
-                self.current_scope().bytes.push(binding);
-            }
-            Op::SetLocal(binding) => {
-                self.current_scope().bytes.push(Op::SETLOCAL);
-                self.current_scope().bytes.push(binding);
-            }
-            Op::GetBuiltin(builtin) => {
-                self.current_scope().bytes.push(Op::GETBUILTIN);
-                self.current_scope().bytes.push(builtin);
-            }
-            Op::Closure(reference, free) => {
-                self.current_scope().bytes.push(Op::CLOSURE);
-                self.current_scope()
-                    .bytes
-                    .extend_from_slice(&reference.to_be_bytes());
-                self.current_scope().bytes.push(free);
-            }
-            Op::GetFree(binding) => {
-                self.current_scope().bytes.push(Op::GETFREE);
-                self.current_scope().bytes.push(binding);
-            }
-            Op::Current => {
-                self.current_scope().bytes.push(Op::CURRENT);
-            }
-        }
     }
 }
 
@@ -425,122 +294,6 @@ mod tests {
     use crate::parser::Parser;
 
     use test_case::test_case;
-
-    trait Decode {
-        fn decode(&self) -> Option<Vec<Op>>;
-    }
-
-    impl Decode for &[u8] {
-        fn decode(&self) -> Option<Vec<Op>> {
-            let mut ops = vec![];
-            let mut i = 0;
-
-            while i < self.len() {
-                match self[i] {
-                    Op::CONSTANT => {
-                        let reference = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::Constant(reference));
-                        i += 2;
-                    }
-                    Op::POP => ops.push(Op::Pop),
-                    Op::UNIT => ops.push(Op::Unit),
-                    Op::FALSE => ops.push(Op::False),
-                    Op::TRUE => ops.push(Op::True),
-                    Op::ADD => ops.push(Op::Add),
-                    Op::SUB => ops.push(Op::Sub),
-                    Op::MUL => ops.push(Op::Mul),
-                    Op::DIV => ops.push(Op::Div),
-                    Op::EQ => ops.push(Op::Eq),
-                    Op::NEQ => ops.push(Op::Neq),
-                    Op::LT => ops.push(Op::Lt),
-                    Op::GT => ops.push(Op::Gt),
-                    Op::MINUS => ops.push(Op::Minus),
-                    Op::BANG => ops.push(Op::Bang),
-                    Op::JUMPIFNOT => {
-                        let address = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::JumpIfNot(address));
-                        i += 2;
-                    }
-                    Op::JUMP => {
-                        let address = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::Jump(address));
-                        i += 2;
-                    }
-                    Op::GETGLOBAL => {
-                        let binding = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::GetGlobal(binding));
-                        i += 2;
-                    }
-                    Op::SETGLOBAL => {
-                        let binding = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::SetGlobal(binding));
-                        i += 2;
-                    }
-                    Op::ARRAY => {
-                        let n = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::Array(n));
-                        i += 2;
-                    }
-                    Op::MAP => {
-                        let n = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        ops.push(Op::Map(n));
-                        i += 2;
-                    }
-                    Op::INDEX => ops.push(Op::Index),
-                    Op::CALL => {
-                        let m = self[i + 1];
-                        ops.push(Op::Call(m));
-                        i += 1;
-                    }
-                    Op::RETURN => ops.push(Op::Return),
-                    Op::GETLOCAL => {
-                        let binding = self[i + 1];
-                        ops.push(Op::GetLocal(binding));
-                        i += 1;
-                    }
-                    Op::SETLOCAL => {
-                        let binding = self[i + 1];
-                        ops.push(Op::SetLocal(binding));
-                        i += 1;
-                    }
-                    Op::GETBUILTIN => {
-                        let builtin = self[i + 1];
-                        ops.push(Op::GetBuiltin(builtin));
-                        i += 1;
-                    }
-                    Op::CLOSURE => {
-                        let reference = u16::from_be_bytes([self[i + 1], self[i + 2]]);
-                        let free = self[i + 3];
-                        ops.push(Op::Closure(reference, free));
-                        i += 3;
-                    }
-                    Op::GETFREE => {
-                        let binding = self[i + 1];
-                        ops.push(Op::GetFree(binding));
-                        i += 1;
-                    }
-                    Op::CURRENT => ops.push(Op::Current),
-                    _ => {
-                        return None;
-                    }
-                }
-
-                i += 1;
-            }
-
-            Some(ops)
-        }
-    }
-
-    fn encode(ops: Vec<Op>) -> Vec<u8> {
-        let mut compiler = Compiler::new();
-
-        for op in ops {
-            compiler.encode(op);
-        }
-
-        compiler.scopes[0].bytes.clone()
-    }
 
     fn concat<A: Clone>(xs: Vec<A>, ys: Vec<A>) -> Vec<A> {
         let zs: Vec<A> = xs.iter().cloned().chain(ys.iter().cloned()).collect();
@@ -877,9 +630,9 @@ mod tests {
         "if (true) { 10 }; 20;",
         vec![
             Op::True,
-            Op::JumpIfNot(10),
+            Op::JumpIfNot(4),
             Op::Constant(9),
-            Op::Jump(11),
+            Op::Jump(5),
             Op::Unit,
             Op::Pop,
             Op::Constant(10),
@@ -895,13 +648,13 @@ mod tests {
         "if (true) { 1; 2; 3 }",
         vec![
             Op::True,
-            Op::JumpIfNot(18),
+            Op::JumpIfNot(8),
             Op::Constant(9),
             Op::Pop,
             Op::Constant(10),
             Op::Pop,
             Op::Constant(11),
-            Op::Jump(19),
+            Op::Jump(9),
             Op::Unit
         ],
         heap(vec![
@@ -915,9 +668,9 @@ mod tests {
         "if (true) { 10 } else { 20 }; 30;",
         vec![
             Op::True,
-            Op::JumpIfNot(10),
+            Op::JumpIfNot(4),
             Op::Constant(9),
-            Op::Jump(13),
+            Op::Jump(5),
             Op::Constant(10),
             Op::Pop,
             Op::Constant(11),
@@ -993,13 +746,13 @@ mod tests {
             Object::integer(5),
             Object::integer(10),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Constant(10),
                     Op::Add,
                     Op::Return,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1015,12 +768,12 @@ mod tests {
             Object::integer(5),
             Object::integer(10),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Constant(10),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1036,12 +789,12 @@ mod tests {
             Object::integer(5),
             Object::integer(10),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Pop,
                     Op::Constant(10),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1055,10 +808,10 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(6),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1074,10 +827,10 @@ mod tests {
         heap(vec![
             Object::integer(42),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1095,10 +848,10 @@ mod tests {
         heap(vec![
             Object::integer(42),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1121,19 +874,19 @@ mod tests {
         heap(vec![
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(11),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1151,10 +904,10 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -1175,14 +928,14 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Pop,
                     Op::GetLocal(1),
                     Op::Pop,
                     Op::GetLocal(2),
                     Op::Return,
-                ]),
+                ],
                 locals: 3,
                 params: 3,
             },
@@ -1202,10 +955,10 @@ mod tests {
         heap(vec![
             Object::integer(42),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetGlobal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             },
@@ -1220,12 +973,12 @@ mod tests {
         heap(vec![
             Object::integer(42),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1241,7 +994,7 @@ mod tests {
             Object::integer(1),
             Object::integer(2),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(9),
                     Op::SetLocal(0),
                     Op::Constant(10),
@@ -1250,7 +1003,7 @@ mod tests {
                     Op::GetLocal(1),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 2,
                 params: 0,
             },
@@ -1282,12 +1035,12 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetBuiltin(Builtin::LEN),
                     Op::Array(0),
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 0,
                 params: 0,
             }
@@ -1301,21 +1054,21 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Closure(9, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -1329,33 +1082,33 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetFree(1),
                     Op::Add,
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Closure(9, 2),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::GetLocal(0),
                     Op::Closure(10, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -1385,7 +1138,7 @@ mod tests {
             Object::integer(3),
             Object::integer(4),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(12),
                     Op::SetLocal(0),
                     Op::GetGlobal(0),
@@ -1396,30 +1149,30 @@ mod tests {
                     Op::GetLocal(0),
                     Op::Add,
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(11),
                     Op::SetLocal(0),
                     Op::GetFree(0),
                     Op::GetLocal(0),
                     Op::Closure(13, 2),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Constant(10),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Closure(14, 1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1437,12 +1190,12 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
-                    Op::Current,
+                ops: vec![
+                    Op::CurrentClosure,
                     Op::GetLocal(0),
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
@@ -1464,25 +1217,25 @@ mod tests {
         ],
         heap(vec![
             Object::Function {
-                bytes: encode(vec![
-                    Op::Current,
+                ops: vec![
+                    Op::CurrentClosure,
                     Op::GetLocal(0),
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 1,
             },
             Object::integer(1),
             Object::Function {
-                bytes: encode(vec![
+                ops: vec![
                     Op::Closure(9, 0),
                     Op::SetLocal(0),
                     Op::GetLocal(0),
                     Op::Constant(10),
                     Op::Call(1),
                     Op::Return,
-                ]),
+                ],
                 locals: 1,
                 params: 0,
             },
@@ -1496,7 +1249,7 @@ mod tests {
         let mut compiler = Compiler::new();
         let byte_code = compiler.compile(&ast).unwrap();
 
-        assert_eq!((&byte_code.bytes[..]).decode().unwrap(), ops);
+        assert_eq!((&byte_code.ops[..]), ops);
         assert_eq!(byte_code.constants, constants);
     }
 }
