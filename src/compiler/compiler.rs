@@ -77,6 +77,16 @@ impl Compiler {
         reference
     }
 
+    fn load_symbol(&mut self, symbol: Symbol) {
+        match symbol.scope {
+            symbol::Scope::Global => self.emit(Op::GetGlobal(symbol.index)),
+            symbol::Scope::Local => self.emit(Op::GetLocal(symbol.index as u8)),
+            symbol::Scope::Builtin => self.emit(Op::GetBuiltin(symbol.index as u8)),
+            symbol::Scope::Free => self.emit(Op::GetFree(symbol.index as u8)),
+            symbol::Scope::Function => self.emit(Op::CurrentClosure),
+        };
+    }
+
     pub fn compile(&mut self, ast: &Program) -> Result<ByteCode> {
         self.compile_block_stmt(ast)?;
 
@@ -233,7 +243,7 @@ impl Compiler {
                 self.compile_block_stmt(body)?;
 
                 let free_symbols = self.symbol_table.free_symbols.clone();
-                let locals = self.symbol_table.cnt as usize;
+                let locals = self.symbol_table.n_defs as usize;
 
                 let mut ops = self.leave_scope();
 
@@ -272,16 +282,6 @@ impl Compiler {
         }
 
         Ok(())
-    }
-
-    fn load_symbol(&mut self, symbol: Symbol) {
-        match symbol.scope {
-            symbol::Scope::Global => self.emit(Op::GetGlobal(symbol.index)),
-            symbol::Scope::Local => self.emit(Op::GetLocal(symbol.index as u8)),
-            symbol::Scope::Builtin => self.emit(Op::GetBuiltin(symbol.index as u8)),
-            symbol::Scope::Free => self.emit(Op::GetFree(symbol.index as u8)),
-            symbol::Scope::Function => self.emit(Op::CurrentClosure),
-        };
     }
 }
 

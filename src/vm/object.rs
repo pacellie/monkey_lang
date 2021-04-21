@@ -63,9 +63,10 @@ impl fmt::Display for Object {
             ),
             Object::Function { .. } => write!(f, "function"),
             Object::Builtin(builtin) => write!(f, "{}", builtin),
-            Object::Closure { frees, .. } => write!(
+            Object::Closure { fun, frees } => write!(
                 f,
-                "closure({})",
+                "closure({}, {})",
+                fun,
                 frees
                     .iter()
                     .map(|reference| format!("{}", reference))

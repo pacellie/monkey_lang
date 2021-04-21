@@ -45,7 +45,7 @@ impl Precedence {
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
-    peek: Token, // TODO: peek not necessary?
+    peek: Token,
 }
 
 impl<'a> Parser<'a> {
@@ -72,7 +72,7 @@ impl<'a> Parser<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(MonkeyError::parser_error(
+            Err(MonkeyError::unexpected_token(
                 token.to_string(),
                 self.current.to_string(),
             ))
@@ -168,7 +168,10 @@ impl<'a> Parser<'a> {
                 Ok(name)
             }
             _ => {
-                return Err(MonkeyError::parser_error("name", self.current.to_string()));
+                return Err(MonkeyError::unexpected_token(
+                    "name",
+                    self.current.to_string(),
+                ));
             }
         }
     }
@@ -203,7 +206,7 @@ impl<'a> Parser<'a> {
             Token::Bang | Token::Minus => self.parse_prefix_expr()?,
             Token::If => self.parse_if_expr()?,
             _ => {
-                return Err(MonkeyError::parser_error(
+                return Err(MonkeyError::unexpected_token(
                     "start of an expression",
                     self.current.to_string(),
                 ));

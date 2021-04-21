@@ -1,13 +1,6 @@
 use std::fmt;
 
 pub type Reference = u16;
-pub type Address = u16;
-pub type GlobalBinding = u16;
-pub type LocalBinding = u8;
-pub type FreeBinding = u8;
-pub type N = u16;
-pub type M = u8;
-pub type Builtin = u8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
@@ -36,32 +29,32 @@ pub enum Op {
     Bang,
 
     // Jumps
-    JumpIfNot(Address),
-    Jump(Address),
+    JumpIfNot(u16),
+    Jump(u16),
 
     // Global Bindings
-    GetGlobal(GlobalBinding),
-    SetGlobal(GlobalBinding),
+    GetGlobal(u16),
+    SetGlobal(u16),
 
     // Composite Data Types
-    Array(N),
-    Map(N),
+    Array(u16),
+    Map(u16),
     Index,
 
     // Functions
-    Call(M),
+    Call(u8),
     Return,
 
     // Local Bindings
-    GetLocal(LocalBinding),
-    SetLocal(LocalBinding),
+    GetLocal(u8),
+    SetLocal(u8),
 
     // Builtin
-    GetBuiltin(Builtin),
+    GetBuiltin(u8),
 
     // Closures
-    Closure(Reference, M),
-    GetFree(FreeBinding),
+    Closure(Reference, u8),
+    GetFree(u8),
     CurrentClosure,
 }
 

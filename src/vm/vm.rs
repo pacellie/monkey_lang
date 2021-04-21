@@ -423,7 +423,7 @@ impl VirtualMachine {
                             if vec.len() != 0 {
                                 vec[0]
                             } else {
-                                return Err(MonkeyError::runtime_error("first([])"));
+                                return Err(MonkeyError::type_mismatch("first([])"));
                             }
                         }
                         _ => return Err(MonkeyError::type_mismatch(format!("first({})", obj))),
@@ -439,7 +439,7 @@ impl VirtualMachine {
                             if vec.len() != 0 {
                                 vec[vec.len() - 1]
                             } else {
-                                return Err(MonkeyError::runtime_error("last([])"));
+                                return Err(MonkeyError::type_mismatch("last([])"));
                             }
                         }
                         _ => return Err(MonkeyError::type_mismatch(format!("last({})", obj))),
@@ -456,7 +456,7 @@ impl VirtualMachine {
                                 let obj = Object::Array(vec[1..].to_vec());
                                 self.reference(obj)
                             } else {
-                                return Err(MonkeyError::runtime_error("rest([])"));
+                                return Err(MonkeyError::type_mismatch("rest([])"));
                             }
                         }
                         _ => return Err(MonkeyError::type_mismatch(format!("rest({})", obj))),
@@ -2438,29 +2438,29 @@ mod tests {
         assert_eq!(vm.heap, heap)
     }
 
-    #[test_case("5 + true"              , MonkeyError::type_mismatch("5 + true")      ; "error 01")]
-    #[test_case("5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")      ; "error 02")]
-    #[test_case("-true"                 , MonkeyError::type_mismatch("-true")         ; "error 03")]
-    #[test_case("!5"                    , MonkeyError::type_mismatch("!5")            ; "error 04")]
-    #[test_case("5; true + false; 5"    , MonkeyError::type_mismatch("true + false")  ; "error 05")]
-    #[test_case("if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")  ; "error 06")]
-    #[test_case("len(1)"                , MonkeyError::type_mismatch("len(1)")        ; "error 07")]
-    #[test_case("len(\"one\", \"two\")" , MonkeyError::wrong_number_of_args(1, 2)     ; "error 08")]
-    #[test_case("[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)      ; "error 09")]
-    #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)     ; "error 10")]
-    #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")       ; "error 11")]
-    #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")       ; "error 12")]
-    #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[closure()]") ; "error 13")]
-    #[test_case("fn() { 1 }(1)"         , MonkeyError::wrong_number_of_args(0, 1)     ; "error 14")]
-    #[test_case("fn(x) { x }()"         , MonkeyError::wrong_number_of_args(1, 0)     ; "error 15")]
-    #[test_case("fn(x, y) { x + y }(1)" , MonkeyError::wrong_number_of_args(2, 1)     ; "error 16")]
-    #[test_case("first([])"             , MonkeyError::runtime_error("first([])")     ; "error 17")]
-    #[test_case("first(1)"              , MonkeyError::type_mismatch("first(1)")      ; "error 18")]
-    #[test_case("last([])"              , MonkeyError::runtime_error("last([])")      ; "error 19")]
-    #[test_case("last(1)"               , MonkeyError::type_mismatch("last(1)")       ; "error 20")]
-    #[test_case("rest([])"              , MonkeyError::runtime_error("rest([])")      ; "error 21")]
-    #[test_case("rest(1)"               , MonkeyError::type_mismatch("rest(1)")       ; "error 22")]
-    #[test_case("push(1, 1)"            , MonkeyError::type_mismatch("push(1, ...)")  ; "error 23")]
+    #[test_case("5 + true"              , MonkeyError::type_mismatch("5 + true")        ; "error 01")]
+    #[test_case("5 + true; 5;"          , MonkeyError::type_mismatch("5 + true")        ; "error 02")]
+    #[test_case("-true"                 , MonkeyError::type_mismatch("-true")           ; "error 03")]
+    #[test_case("!5"                    , MonkeyError::type_mismatch("!5")              ; "error 04")]
+    #[test_case("5; true + false; 5"    , MonkeyError::type_mismatch("true + false")    ; "error 05")]
+    #[test_case("if (1) { 10 }"         , MonkeyError::type_mismatch("if (1) {...}")    ; "error 06")]
+    #[test_case("len(1)"                , MonkeyError::type_mismatch("len(1)")          ; "error 07")]
+    #[test_case("len(\"one\", \"two\")" , MonkeyError::wrong_number_of_args(1, 2)       ; "error 08")]
+    #[test_case("[1, 2, 3][3]"          , MonkeyError::index_out_of_bounds(3, 2)        ; "error 09")]
+    #[test_case("[1, 2, 3][-1]"         , MonkeyError::index_out_of_bounds(-1, 2)       ; "error 10")]
+    #[test_case("{\"foo\": 5}[\"bar\"]" , MonkeyError::missing_index("\"bar\"")         ; "error 11")]
+    #[test_case("{}[\"foo\"]"           , MonkeyError::missing_index("\"foo\"")         ; "error 12")]
+    #[test_case("{}[fn(x) { x }]"       , MonkeyError::type_mismatch("{}[closure(9, )]"); "error 13")]
+    #[test_case("fn() { 1 }(1)"         , MonkeyError::wrong_number_of_args(0, 1)       ; "error 14")]
+    #[test_case("fn(x) { x }()"         , MonkeyError::wrong_number_of_args(1, 0)       ; "error 15")]
+    #[test_case("fn(x, y) { x + y }(1)" , MonkeyError::wrong_number_of_args(2, 1)       ; "error 16")]
+    #[test_case("first([])"             , MonkeyError::type_mismatch("first([])")       ; "error 17")]
+    #[test_case("first(1)"              , MonkeyError::type_mismatch("first(1)")        ; "error 18")]
+    #[test_case("last([])"              , MonkeyError::type_mismatch("last([])")        ; "error 19")]
+    #[test_case("last(1)"               , MonkeyError::type_mismatch("last(1)")         ; "error 20")]
+    #[test_case("rest([])"              , MonkeyError::type_mismatch("rest([])")        ; "error 21")]
+    #[test_case("rest(1)"               , MonkeyError::type_mismatch("rest(1)")         ; "error 22")]
+    #[test_case("push(1, 1)"            , MonkeyError::type_mismatch("push(1, ...)")    ; "error 23")]
     fn test_error(input: &str, expected: MonkeyError) {
         let lexer = Lexer::new(input.as_bytes());
         let mut parser = Parser::new(lexer);

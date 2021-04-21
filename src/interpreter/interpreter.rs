@@ -227,7 +227,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[0].clone())
                     } else {
-                        Err(MonkeyError::runtime_error("first([])"))
+                        Err(MonkeyError::type_mismatch("first([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("first({})", obj))),
@@ -240,7 +240,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(vec[vec.len() - 1].clone())
                     } else {
-                        Err(MonkeyError::runtime_error("last([])"))
+                        Err(MonkeyError::type_mismatch("last([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("last({})", obj))),
@@ -253,7 +253,7 @@ fn eval_builtin_call_expr(builtin: Builtin, args: Vec<Object>) -> Result<Object>
                     if vec.len() != 0 {
                         Ok(Object::Array(vec[1..].to_vec()))
                     } else {
-                        Err(MonkeyError::runtime_error("rest([])"))
+                        Err(MonkeyError::type_mismatch("rest([])"))
                     }
                 }
                 _ => Err(MonkeyError::type_mismatch(format!("rest({})", obj))),

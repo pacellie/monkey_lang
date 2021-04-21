@@ -11,7 +11,7 @@ pub enum MonkeyError {
 }
 
 impl MonkeyError {
-    pub fn parser_error<S, T>(expected: S, got: T) -> MonkeyError
+    pub fn unexpected_token<S, T>(expected: S, got: T) -> MonkeyError
     where
         S: Into<String>,
         T: Into<String>,
@@ -21,6 +21,13 @@ impl MonkeyError {
             expected.into(),
             got.into()
         ))
+    }
+
+    pub fn undefined_variable<S>(msg: S) -> MonkeyError
+    where
+        S: Into<String>,
+    {
+        MonkeyError::CompilerError(format!("undefined variable {}", msg.into()))
     }
 
     pub fn type_mismatch<S>(msg: S) -> MonkeyError
@@ -56,20 +63,6 @@ impl MonkeyError {
         S: Into<String>,
     {
         MonkeyError::RuntimeError(format!("missing index: `{}`", msg.into()))
-    }
-
-    pub fn undefined_variable<S>(msg: S) -> MonkeyError
-    where
-        S: Into<String>,
-    {
-        MonkeyError::CompilerError(format!("undefined variable {}", msg.into()))
-    }
-
-    pub fn runtime_error<S>(msg: S) -> MonkeyError
-    where
-        S: Into<String>,
-    {
-        MonkeyError::RuntimeError(msg.into())
     }
 }
 

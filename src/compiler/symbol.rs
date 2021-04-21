@@ -32,7 +32,7 @@ pub struct SymbolTable {
     pub outer: Option<Box<SymbolTable>>,
     pub store: HashMap<String, Symbol>,
     pub free_symbols: Vec<Symbol>,
-    pub cnt: u16,
+    pub n_defs: u16,
 }
 
 impl SymbolTable {
@@ -41,7 +41,7 @@ impl SymbolTable {
             outer: None,
             store: HashMap::new(),
             free_symbols: vec![],
-            cnt: 0,
+            n_defs: 0,
         }
     }
 
@@ -62,7 +62,7 @@ impl SymbolTable {
             outer: None,
             store,
             free_symbols: vec![],
-            cnt: 0,
+            n_defs: 0,
         }
     }
 
@@ -71,7 +71,7 @@ impl SymbolTable {
             outer: Some(Box::new(outer)),
             store: HashMap::new(),
             free_symbols: vec![],
-            cnt: 0,
+            n_defs: 0,
         }
     }
 
@@ -80,17 +80,17 @@ impl SymbolTable {
             Symbol {
                 name: name.to_string(),
                 scope: Scope::Global,
-                index: self.cnt,
+                index: self.n_defs,
             }
         } else {
             Symbol {
                 name: name.to_string(),
                 scope: Scope::Local,
-                index: self.cnt,
+                index: self.n_defs,
             }
         };
 
-        self.cnt += 1;
+        self.n_defs += 1;
 
         self.store.entry(name.to_string()).or_insert(symbol)
     }
